@@ -564,10 +564,24 @@ pub async fn run(
                 };
                 match engine.stream_key(platform).await {
                     Ok(Some(key)) => {
-                        let outcome = crate::clipboard::copy(&key);
-                        // Drop the key as soon as the copy is done rather than
-                        // letting it live until the end of the match arm.
-                        drop(key);
+                        // On the blocking pool: copying spawns a helper
+                        // program and writes to its stdin, and a helper that
+                        // hangs (an xclip with no X display to answer it)
+                        // would otherwise block a tokio worker thread — one
+                        // shared with the chat tasks and the OBS connection.
+                        //
+                        // The key is moved in and dropped inside the closure,
+                        // so it stops existing as soon as the copy is done
+                        // rather than living to the end of the match arm.
+                        let outcome = tokio::task::spawn_blocking(move || {
+                            let outcome = crate::clipboard::copy(&key);
+                            drop(key);
+                            outcome
+                        })
+                        .await
+                        .unwrap_or_else(|err| {
+                            Err(anyhow::anyhow!("the clipboard task did not finish: {err}"))
+                        });
                         let _ = events.send(match outcome {
                             Ok(()) => Event::Log {
                                 level: LogLevel::Success,

@@ -501,14 +501,7 @@ pub fn available_backend() -> Option<&'static str> {
 
 /// Whether `program` exists as an executable file somewhere on `PATH`.
 fn on_path(program: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
-        let candidate = dir.join(program);
-        // A directory named `gdbus` is not a program named `gdbus`.
-        candidate.is_file()
-    })
+    crate::paths::program_on_path(program)
 }
 
 /// Renders a string as GVariant source text: wrapped in double quotes, with

@@ -138,6 +138,42 @@ pub fn write_secret_file(path: &std::path::Path, contents: &str) -> Result<()> {
 }
 
 /// Test helpers for pointing the whole program at a scratch config directory.
+/// Whether a program of this name exists on `PATH`.
+///
+/// Used instead of spawning the program with `--help` to find out. Spawning
+/// is a fork and an exec per candidate — six of them for the clipboard probe
+/// — which is slow enough to be felt when it happens on an async task, and
+/// it runs a program purely to observe that it exists.
+///
+/// A bare name is looked up along `PATH`; a name containing a path separator
+/// is taken as given, the way a shell does it. On Windows the executable
+/// extensions in `PATHEXT` are tried as well, so `clip` finds `clip.exe`.
+pub fn program_on_path(program: &str) -> bool {
+    let is_program = |candidate: &std::path::Path| candidate.is_file();
+
+    // A name with a separator in it is a path, not something to search for.
+    if program.contains(std::path::MAIN_SEPARATOR) || program.contains('/') {
+        return is_program(std::path::Path::new(program));
+    }
+
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(program);
+        // A directory named `gdbus` is not a program named `gdbus`.
+        if is_program(&candidate) {
+            return true;
+        }
+        // Windows spells the extension out in PATHEXT rather than marking a
+        // file executable, so `clip` on PATH is really `clip.exe`.
+        std::env::var_os("PATHEXT").is_some_and(|extensions| {
+            std::env::split_paths(&extensions)
+                .any(|extension| is_program(&dir.join(format!("{program}{}", extension.display()))))
+        })
+    })
+}
+
 #[cfg(test)]
 pub mod test_support {
     use std::path::PathBuf;
@@ -282,5 +318,31 @@ mod tests {
             leftovers.is_empty(),
             "temp files left behind: {leftovers:?}"
         );
+    }
+
+    #[test]
+    fn a_program_on_path_is_found_and_a_directory_is_not() {
+        // Reuses the scratch directory helper (and with it the environment
+        // mutex), because this test edits PATH and must not race the others.
+        let scratch = test_support::ScratchConfigDir::new("program-on-path");
+        let bin = scratch.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("msm-fake-helper"), b"#!/bin/sh\n").unwrap();
+        // A directory of the same name must not count as the program.
+        std::fs::create_dir_all(bin.join("msm-fake-dir")).unwrap();
+
+        let previous = std::env::var_os("PATH");
+        std::env::set_var("PATH", &bin);
+        let found = program_on_path("msm-fake-helper");
+        let directory = program_on_path("msm-fake-dir");
+        let missing = program_on_path("msm-definitely-not-installed");
+        match previous {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+
+        assert!(found, "a file on PATH is a program");
+        assert!(!directory, "a directory of that name is not a program");
+        assert!(!missing);
     }
 }

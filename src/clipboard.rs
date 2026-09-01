@@ -111,18 +111,13 @@ pub enum HelperStatus {
 }
 
 /// Whether a program exists and can be run.
+///
+/// A `PATH` lookup rather than spawning the program with `--help`. Spawning
+/// six candidates is six forks and execs, which is long enough to be felt
+/// when — as in Config → Diagnostics — it happens on the task that also draws
+/// the screen, and it runs programs purely to observe that they exist.
 fn is_installed(program: &str) -> bool {
-    // `--help` rather than running it for real: this must not touch the
-    // clipboard. The exit status is not checked — `clip.exe` has no `--help`
-    // and fails — because the question is only whether the program exists at
-    // all, which is what a successful spawn answers.
-    Command::new(program)
-        .arg("--help")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    crate::paths::program_on_path(program)
 }
 
 /// Whether the display server a helper needs is actually there.
