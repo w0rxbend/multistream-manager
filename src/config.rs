@@ -106,6 +106,19 @@ pub struct AppearanceConfig {
     /// How long a pop-up notification stays on screen, in seconds.
     pub toast_seconds: u64,
 
+    /// Hide things that must not be captured while you are live.
+    ///
+    /// `"auto"` (the default) turns it on whenever OBS reports that it is
+    /// streaming or recording, and off again when it stops. `"on"` and
+    /// `"off"` force it either way — `"on"` is for anybody whose capture
+    /// setup this program cannot see, and `"off"` for a machine that never
+    /// shares its screen.
+    ///
+    /// Borrowed from Chatterino, which does the same thing by noticing that
+    /// OBS is running. This has a better signal than that: OBS tells it
+    /// whether the stream is actually going out.
+    pub streamer_mode: String,
+
     /// Repaint the terminal emulator's own background to match the theme.
     ///
     /// This uses an escape sequence (OSC 11) that changes the colour of the
@@ -128,6 +141,7 @@ impl Default for AppearanceConfig {
             toasts: true,
             toast_seconds: 5,
             terminal_background: false,
+            streamer_mode: "auto".to_string(),
         }
     }
 }
@@ -1081,6 +1095,43 @@ const POLL_INTERVAL_MIN_SECS: u64 = 5;
 
 /// …and the slowest, beyond which the dashboard is not really live.
 const POLL_INTERVAL_MAX_SECS: u64 = 3600;
+
+/// When to hide what must not be captured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamerMode {
+    /// On whenever OBS says it is streaming or recording.
+    Auto,
+    Always,
+    Never,
+}
+
+impl StreamerMode {
+    /// Read the setting, treating anything unrecognised as the default rather
+    /// than refusing to start over a typo.
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "on" | "always" | "true" => StreamerMode::Always,
+            "off" | "never" | "false" => StreamerMode::Never,
+            _ => StreamerMode::Auto,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            StreamerMode::Auto => StreamerMode::Always,
+            StreamerMode::Always => StreamerMode::Never,
+            StreamerMode::Never => StreamerMode::Auto,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StreamerMode::Auto => "auto",
+            StreamerMode::Always => "on",
+            StreamerMode::Never => "off",
+        }
+    }
+}
 
 impl Config {
     /// Load `config.toml`, or return defaults if it does not exist yet.

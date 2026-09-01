@@ -233,7 +233,7 @@ impl ConfigTab {
 }
 
 /// How many settings the Appearance section lists.
-pub const APPEARANCE_ROWS: usize = 7;
+pub const APPEARANCE_ROWS: usize = 8;
 
 /// How many switches the Notifications section lists.
 /// One switchable notification setting.
@@ -452,7 +452,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Section::Accounts => draw_accounts(frame, inner, app, config),
         Section::Maintenance => draw_maintenance(frame, inner, app, config),
         Section::Diagnostics => draw_diagnostics(frame, inner, app),
-        Section::Paths => draw_paths(frame, inner),
+        Section::Paths => draw_paths(frame, inner, app),
     }
 }
 
@@ -556,6 +556,12 @@ fn draw_appearance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab)
         (
             "Terminal background",
             on_off(appearance.terminal_background),
+        ),
+        (
+            "Streamer mode",
+            crate::config::StreamerMode::parse(&appearance.streamer_mode)
+                .name()
+                .to_string(),
         ),
     ];
 
@@ -1068,9 +1074,19 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_paths(frame: &mut Frame, area: Rect) {
+fn draw_paths(frame: &mut Frame, area: Rect, app: &App) {
     let sk = theme::skin();
+    // A path carries your username, and the Files section is exactly the sort
+    // of screen somebody tabs to mid-stream to check something.
+    let hide = app.streamer_mode();
     let path = |result: anyhow::Result<std::path::PathBuf>| match result {
+        Ok(path) if hide => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            format!("…/{name}")
+        }
         Ok(path) => path.display().to_string(),
         Err(err) => format!("unavailable: {err}"),
     };

@@ -1669,9 +1669,18 @@ impl App {
             3 => self.config.appearance.mouse = !self.config.appearance.mouse,
             4 => self.config.appearance.telemetry = !self.config.appearance.telemetry,
             5 => self.config.appearance.toasts = !self.config.appearance.toasts,
-            _ => {
+            6 => {
                 self.config.appearance.terminal_background =
                     !self.config.appearance.terminal_background
+            }
+            _ => {
+                // Three-way rather than a switch: "auto" is the useful
+                // default and the other two are for machines this program
+                // cannot see the capture setup of.
+                let next =
+                    crate::config::StreamerMode::parse(&self.config.appearance.streamer_mode)
+                        .next();
+                self.config.appearance.streamer_mode = next.name().to_string();
             }
         }
 
@@ -2394,6 +2403,28 @@ impl App {
                 vec![]
             }
             _ => vec![],
+        }
+    }
+
+    /// Whether to hide what must not be captured right now.
+    ///
+    /// Borrowed from Chatterino's streamer mode, which notices that OBS is
+    /// running; this has the better signal, because OBS tells it whether the
+    /// stream is actually going out. The point is the moment nobody plans
+    /// for: you tab to the Config screen mid-stream to check something, and
+    /// the file paths carry your username while the setup screen carries a
+    /// client id that belongs to your application.
+    pub fn streamer_mode(&self) -> bool {
+        match crate::config::StreamerMode::parse(&self.config.appearance.streamer_mode) {
+            crate::config::StreamerMode::Always => true,
+            crate::config::StreamerMode::Never => false,
+            // Recording counts: a local recording is uploaded later, and a
+            // credential in it is just as exposed as one on a live stream.
+            crate::config::StreamerMode::Auto => {
+                self.config.obs.enabled
+                    && self.obs.is_connected()
+                    && (self.obs.streaming || self.obs.recording)
+            }
         }
     }
 
@@ -6616,6 +6647,39 @@ mod tests {
         );
         // And from below, unity is still the ceiling.
         assert_eq!((0.98f64 + 0.05).clamp(0.0, 0.98f64.max(1.0)), 1.0);
+    }
+
+    /// Streamer mode follows OBS by default, and can be forced either way for
+    /// a machine whose capture setup this program cannot see.
+    #[test]
+    fn streamer_mode_follows_obs_and_can_be_forced() {
+        let mut app = app();
+        app.config.obs.enabled = true;
+        app.obs.connection = crate::obs::state::Connection::Connected;
+
+        assert!(!app.streamer_mode(), "idle OBS is not a live screen");
+
+        app.obs.streaming = true;
+        assert!(app.streamer_mode(), "streaming turns it on");
+
+        app.obs.streaming = false;
+        // A local recording is uploaded later, and a credential in it is just
+        // as exposed as one on a live stream.
+        app.obs.recording = true;
+        assert!(app.streamer_mode(), "so does recording");
+
+        app.obs.recording = false;
+        app.config.appearance.streamer_mode = "on".into();
+        assert!(app.streamer_mode(), "forced on regardless of OBS");
+
+        app.obs.streaming = true;
+        app.config.appearance.streamer_mode = "off".into();
+        assert!(!app.streamer_mode(), "forced off regardless of OBS");
+
+        // An unrecognised value falls back to the default rather than
+        // refusing to start over a typo.
+        app.config.appearance.streamer_mode = "sometimes".into();
+        assert!(app.streamer_mode(), "an unknown value means auto");
     }
 
     /// Logging out throws away a browser round trip. One key doing both

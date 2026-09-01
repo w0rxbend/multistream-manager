@@ -328,7 +328,10 @@ fn draw_setup(frame: &mut Frame, area: Rect, app: &App) {
             .unwrap_or_default();
         // A secret is drawn as dots even while it is being typed: this window
         // is frequently shared, and a client secret is a credential.
-        let shown = if field.is_secret() {
+        //
+        // A client id is not a secret, but it identifies your application to
+        // anybody watching, so streamer mode hides it too.
+        let shown = if field.is_secret() || app.streamer_mode() {
             "•".repeat(value.chars().count())
         } else {
             value
@@ -649,6 +652,17 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     if app.busy {
         spans.push(Span::styled(
             "  working…",
+            Style::new().fg(sk.warning).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Streamer mode says so. A screen that is quietly hiding things has to
+    // admit it, or somebody stares at a masked field wondering why their
+    // client id has vanished.
+    if app.streamer_mode() {
+        spans.push(Span::styled("  ·  ", Style::new().fg(sk.border)));
+        spans.push(Span::styled(
+            "🛡 streamer mode",
             Style::new().fg(sk.warning).add_modifier(Modifier::BOLD),
         ));
     }
@@ -1579,6 +1593,29 @@ mod tests {
             !screen.contains("Where are you streaming?"),
             "the platform picker is useless without credentials"
         );
+    }
+
+    /// The credential screen is exactly what somebody tabs to mid-stream, and
+    /// a client id identifies your application to everybody watching.
+    #[test]
+    fn streamer_mode_masks_the_credential_screen() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("draw-streamer-mode");
+        let mut config = Config::default();
+        config.appearance.streamer_mode = "on".into();
+        let mut app = App::new(config);
+        app.splash_skipped = true;
+        app.screen = Screen::Setup;
+        app.setup_cursor = 0; // the Twitch client id, which is not a secret
+        for c in "my-real-client-id".chars() {
+            app.handle_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
+
+        let screen = render(&app, 100, 30);
+        assert!(!screen.contains("my-real-client-id"), "{screen}");
+        assert!(screen.contains("streamer mode"), "and it says so: {screen}");
     }
 
     /// The strip has to be on screen from every tab, because the hour of a

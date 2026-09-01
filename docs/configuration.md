@@ -458,6 +458,7 @@ splash = true                 # the animated start-up screen
 mouse = true                  # react to clicks and the wheel
 telemetry = false             # cpu / memory / frame rate in the tab bar
 toasts = true                 # routine pop-ups (problems always show)
+streamer_mode = "auto"        # hide credentials and paths while OBS is live
 toast_seconds = 5             # how long one stays up
 terminal_background = false   # repaint the terminal window's own background
 ```
@@ -544,6 +545,27 @@ there.
 
 `toast_seconds` is clamped to between 1 and 60: a zero would make messages
 vanish before they could be read.
+
+### `streamer_mode`
+
+Hides what must not be captured while you are live: the client ids on the setup
+screen (the secrets are always dots) and the file paths in Config → Files, which
+carry your username. A marker in the header says when it is on, because a screen
+quietly hiding things has to admit it.
+
+| Value | When it is on |
+|---|---|
+| `"auto"` (default) | Whenever OBS reports that it is streaming **or recording** |
+| `"on"` | Always — for a capture setup this program cannot see |
+| `"off"` | Never — for a machine that never shares its screen |
+
+Recording counts because a local recording gets uploaded later, and a credential
+in it is just as exposed as one on a live stream.
+
+This is borrowed from [Chatterino](https://chatterino.com/), which detects that
+OBS is *running*. Here the signal is better: OBS tells this program whether the
+stream is actually going out, so the mode follows the broadcast rather than the
+application.
 
 ### `terminal_background`
 
