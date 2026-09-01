@@ -179,6 +179,8 @@ enum Wake {
 async fn run(params: Params) {
     let mut url = params.url.clone();
     let mut attempt: u32 = 0;
+    // Seeded from the URL so this socket's ladder is its own.
+    let mut jitter = crate::chat::jitter::Lcg::seeded_by(&params.url);
 
     loop {
         match session(&params, &url).await {
@@ -202,11 +204,16 @@ async fn run(params: Params) {
                 // Back at the start URL: a reconnect URL is single-use and
                 // will not work twice.
                 url = params.url.clone();
-                tokio::time::sleep(delay).await;
+                // Spread, like the chat loops. Without it every socket this
+                // program holds retried on the same tick after one outage.
+                tokio::time::sleep(jitter.spread(delay, RECONNECT_JITTER)).await;
             }
         }
     }
 }
+
+/// How far either side of the ladder a reconnect is spread.
+const RECONNECT_JITTER: f64 = 0.1;
 
 /// Doubling backoff, capped.
 fn backoff(attempt: u32) -> Duration {

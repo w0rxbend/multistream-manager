@@ -41,6 +41,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const RECONNECT_INITIAL: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
+/// How far either side of the ladder a reconnect is spread.
+const RECONNECT_JITTER: f64 = 0.1;
+
 /// How often to ask for the figures that no event announces.
 ///
 /// The statistics, and the duration and bitrate of a running stream, have no
@@ -167,6 +170,11 @@ async fn run(
     updates: mpsc::UnboundedSender<Update>,
 ) {
     let mut delay = RECONNECT_INITIAL;
+    // Spread each wait a little. Both chat loops already do this; these two
+    // did not, so a machine running OBS and the chats reconnected everything
+    // in lockstep after one outage — which is the moment a struggling
+    // network can least afford a burst.
+    let mut jitter = crate::chat::jitter::Lcg::seeded_by(&params.url);
     // Why the last attempt failed, carried into the reconnecting state so it
     // reaches the screen.
     let mut reason: Option<String> = None;
@@ -252,7 +260,7 @@ async fn run(
                     ));
                 }
             },
-            _ = tokio::time::sleep(delay) => {}
+            _ = tokio::time::sleep(jitter.spread(delay, RECONNECT_JITTER)) => {}
         }
 
         delay = (delay * 2).min(RECONNECT_MAX);
