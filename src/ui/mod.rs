@@ -163,7 +163,7 @@ fn dispatch(
             Err(TrySendError::Full(command)) => {
                 app.push_log(
                     worker::LogLevel::Error,
-                    &format!(
+                    format!(
                         "Still busy with earlier requests — {} was dropped, try again in a moment.",
                         describe(&command)
                     ),
