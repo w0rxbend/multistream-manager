@@ -92,11 +92,22 @@ pub enum ChatFocus {
     /// The emoji picker (`ctrl+e`): typing filters the built-in catalog,
     /// enter inserts the top match into the composer, esc returns to
     /// wherever the picker was opened from.
-    EmojiPicker { query: String, from_compose: bool },
+    EmojiPicker {
+        query: String,
+        from_compose: bool,
+        /// Which of the drawn candidates Enter will insert.
+        selected: usize,
+    },
     /// A timeout duration prompt (`t` on a selected message): the buffer
     /// holds text like `5m`; enter performs the timeout, esc cancels.
     TimeoutPrompt(String),
 }
+
+/// How many emoji candidates the picker offers.
+///
+/// Shared by the drawing and the key handling, so the selection cursor can
+/// never point past what is on screen.
+pub const EMOJI_CHOICES: usize = 6;
 
 /// Everything the Chat tab remembers between frames.
 pub struct ChatTabState {
@@ -1754,17 +1765,36 @@ fn draw_composer(
                 Span::raw(buffer.clone()),
                 Span::styled("▏", Style::default().fg(sk.accent)),
             ]),
-            ChatFocus::EmojiPicker { query: buffer, .. } => {
+            ChatFocus::EmojiPicker {
+                query: buffer,
+                selected,
+                ..
+            } => {
                 let mut spans = vec![
                     Span::styled("emoji: ", Style::default().fg(sk.accent)),
                     Span::raw(buffer.clone()),
                     Span::styled("▏ ", Style::default().fg(sk.accent)),
                 ];
-                for entry in crate::chat::emoji::search(buffer, 6) {
-                    spans.push(Span::raw(format!("{} ", entry.emoji)));
+                let matches = crate::chat::emoji::search(buffer, EMOJI_CHOICES);
+                for (index, entry) in matches.iter().enumerate() {
+                    // The chosen one is marked, because a list where every row
+                    // looks the same and only one of them is reachable is a
+                    // list that lies about what the keys do.
+                    let style = if index == *selected {
+                        Style::default()
+                            .fg(sk.accent)
+                            .add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    spans.push(Span::styled(format!(" {} ", entry.emoji), style));
                 }
                 spans.push(Span::styled(
-                    " enter inserts the first",
+                    if matches.is_empty() {
+                        "  no matches"
+                    } else {
+                        "  ←/→ choose, enter inserts"
+                    },
                     Style::default().fg(sk.muted),
                 ));
                 Line::from(spans)
@@ -1977,6 +2007,29 @@ mod tests {
     /// The event this whole feature exists for. A raid gives you seconds to
     /// greet a few hundred people, and by default the pop-up fires whether or
     /// not the chat pane happens to be on screen — because during a stream it
+    /// The picker draws a list of candidates, and for a long time only its
+    /// first entry could ever be inserted — the list was decoration that
+    /// misrepresented what the keys did.
+    #[tokio::test]
+    async fn the_emoji_picker_inserts_the_entry_the_cursor_is_on() {
+        let mut state = tab_state(1, 0);
+        with_open_chat(&mut state, Notifier::new(false));
+
+        let candidates = crate::chat::emoji::search("smile", EMOJI_CHOICES);
+        assert!(
+            candidates.len() > 1,
+            "this test needs a query with several matches"
+        );
+
+        state.insert_emoji(candidates[1].emoji);
+
+        assert_eq!(
+            state.active_chat_mut().unwrap().state.draft,
+            candidates[1].emoji,
+            "the second candidate must be insertable, not only the first"
+        );
+    }
+
     /// usually is not.
     #[tokio::test]
     async fn a_raid_notifies_the_desktop_even_with_the_chat_on_screen() {

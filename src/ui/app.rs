@@ -955,6 +955,16 @@ impl App {
             Action::ChatResetPanes => self.chat.reset_split(),
             Action::ChatToggleActivity => self.chat.toggle_activity(),
             Action::ChatToggleInspect => self.chat.inspect = !self.chat.inspect,
+            // Same guard as Ctrl+E and as entering the composer: with no chat
+            // open there is no draft the chosen emoji could land in, so the
+            // picker would take the keyboard and then have nowhere to put its
+            // result. The leader route was missing this.
+            Action::ChatEmojiPicker if self.chat.active_key(self.chat.focus).is_none() => {
+                self.notify(
+                    super::toast::Level::Warning,
+                    "No chat is open, so there is nowhere for an emoji to go.",
+                );
+            }
             Action::ChatEmojiPicker => {
                 self.chat.mode = super::chat_tab::ChatFocus::EmojiPicker {
                     query: String::new(),
@@ -962,6 +972,7 @@ impl App {
                     // a chosen emoji is inserted into a fresh composer rather
                     // than into text already being written.
                     from_compose: false,
+                    selected: 0,
                 }
             }
             Action::ChatReply => {
@@ -1259,14 +1270,19 @@ impl App {
                         // arrive somewhere usable than moving eight panels by
                         // hand.
                         let names = crate::layout::presets::NAMES;
-                        let next = names[(config.cursor + 1) % names.len()].0;
+                        config.preset_index = (config.preset_index + 1) % names.len();
+                        let next = names[config.preset_index].0;
                         if let Some(layout) = crate::layout::presets::by_name(next) {
                             config.draft = layout;
                             config.dirty = true;
                             config.cursor = 0;
                             self.notify(
                                 super::toast::Level::Info,
-                                format!("Layout preset: {next}"),
+                                format!(
+                                    "Layout preset {} of {}: {next}",
+                                    config.preset_index + 1,
+                                    names.len()
+                                ),
                             );
                         }
                     }
@@ -2340,7 +2356,7 @@ impl App {
     /// compose · space,c join a channel · space,x close the chat · ctrl+r
     /// reconnect · q quit. Compose/join modes capture typing until esc.
     fn key_chat(&mut self, key: KeyEvent) -> Vec<Command> {
-        use super::chat_tab::ChatFocus;
+        use super::chat_tab::{ChatFocus, EMOJI_CHOICES};
 
         // Modal input first: while composing or joining, printable keys are
         // text, never commands (so typing a channel called "x" cannot close
@@ -2357,6 +2373,7 @@ impl App {
                         self.chat.mode = ChatFocus::EmojiPicker {
                             query: String::new(),
                             from_compose: true,
+                            selected: 0,
                         };
                     }
                     KeyCode::Char(c) if is_typed_text(&key) => self.chat.compose_push(c),
@@ -2437,7 +2454,9 @@ impl App {
             ChatFocus::EmojiPicker {
                 query: mut buffer,
                 from_compose,
+                mut selected,
             } => {
+                let matches = crate::chat::emoji::search(&buffer, EMOJI_CHOICES).len();
                 match key.code {
                     // Esc goes back where the picker came from — a Normal-mode
                     // user must not land in the composer uninvited.
@@ -2448,9 +2467,29 @@ impl App {
                             ChatFocus::Normal
                         };
                     }
-                    KeyCode::Enter | KeyCode::Tab => {
-                        if let Some(entry) =
-                            crate::chat::emoji::search(&buffer, 1).into_iter().next()
+                    // Move along the row of candidates. Without this the
+                    // drawn list was decoration: only its first entry could
+                    // ever be inserted, however far the query was narrowed.
+                    KeyCode::Left | KeyCode::Up => {
+                        selected = selected.saturating_sub(1);
+                        self.chat.mode = ChatFocus::EmojiPicker {
+                            query: buffer,
+                            from_compose,
+                            selected,
+                        };
+                    }
+                    KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                        selected = (selected + 1).min(matches.saturating_sub(1));
+                        self.chat.mode = ChatFocus::EmojiPicker {
+                            query: buffer,
+                            from_compose,
+                            selected,
+                        };
+                    }
+                    KeyCode::Enter => {
+                        if let Some(entry) = crate::chat::emoji::search(&buffer, EMOJI_CHOICES)
+                            .into_iter()
+                            .nth(selected)
                         {
                             self.chat.insert_emoji(entry.emoji);
                         }
@@ -2458,11 +2497,15 @@ impl App {
                         // the emoji, so the composer is where it can be seen.
                         self.chat.mode = ChatFocus::Compose;
                     }
+                    // Editing the query changes the candidates underneath the
+                    // cursor, so the selection returns to the first one rather
+                    // than pointing at whatever now occupies that position.
                     KeyCode::Backspace => {
                         buffer.pop();
                         self.chat.mode = ChatFocus::EmojiPicker {
                             query: buffer,
                             from_compose,
+                            selected: 0,
                         };
                     }
                     KeyCode::Char(c) if is_typed_text(&key) => {
@@ -2470,6 +2513,7 @@ impl App {
                         self.chat.mode = ChatFocus::EmojiPicker {
                             query: buffer,
                             from_compose,
+                            selected: 0,
                         };
                     }
                     _ => {}
@@ -2492,6 +2536,7 @@ impl App {
                     self.chat.mode = ChatFocus::EmojiPicker {
                         query: String::new(),
                         from_compose: false,
+                        selected: 0,
                     };
                 }
                 _ => {}

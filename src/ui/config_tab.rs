@@ -116,6 +116,13 @@ pub struct ConfigTab {
     /// the machine, so it is taken when the section is opened and on demand
     /// afterwards.
     pub diagnostics: Diagnostics,
+    /// Which layout preset `p` will apply next.
+    ///
+    /// Its own counter, because the obvious thing — deriving it from
+    /// `cursor` — is not a cycle at all: `cursor` is which *panel* row is
+    /// selected, so pressing `p` twice from the same row gave the same preset
+    /// twice, and moving the cursor changed which preset `p` produced.
+    pub preset_index: usize,
 }
 
 /// A cached self-check.
@@ -137,6 +144,7 @@ impl ConfigTab {
             cleanup_listed: false,
             dirty: false,
             diagnostics: Diagnostics::default(),
+            preset_index: 0,
         }
     }
 
