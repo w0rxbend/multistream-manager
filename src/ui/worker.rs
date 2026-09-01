@@ -96,6 +96,15 @@ pub enum Command {
 pub enum Event {
     /// Connection finished; carries the account name resolved for each platform.
     Connected(Vec<(Platform, Result<String, String>)>),
+    /// A logout finished, with whether it actually worked.
+    ///
+    /// The interface used to clear the login flag the moment it *sent* the
+    /// command, so a logout that failed to write left the screen saying you
+    /// were logged out while the token was still on disk.
+    LoggedOut {
+        platform: Platform,
+        result: Result<(), String>,
+    },
     /// The abandoned broadcasts a listing found, so the confirming press can
     /// send back exactly what was shown.
     StaleBroadcasts(Vec<crate::model::StaleBroadcast>),
@@ -442,7 +451,7 @@ pub async fn run(
                     store.remove(platform);
                 })
                 .await;
-                let _ = events.send(match outcome {
+                let _ = events.send(match &outcome {
                     Ok(()) => {
                         // The engine holds a backend authenticated with the
                         // token that has just been thrown away, so it has to
@@ -458,6 +467,12 @@ pub async fn run(
                         level: LogLevel::Error,
                         message: format!("Could not log out of {}: {err:#}", platform.label()),
                     },
+                });
+                // …and the outcome itself, so the interface reports what
+                // happened rather than what it hoped would happen.
+                let _ = events.send(Event::LoggedOut {
+                    platform,
+                    result: outcome.map_err(|err| format!("{err:#}")),
                 });
             }
 

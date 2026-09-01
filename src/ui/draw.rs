@@ -354,9 +354,19 @@ fn draw_setup(frame: &mut Frame, area: Rect, app: &App) {
 /// The login screen: which platforms to authorise in the browser.
 fn draw_login(frame: &mut Frame, area: Rect, app: &App) {
     let sk = crate::theme::skin();
-    let areas = Layout::vertical([Constraint::Length(6), Constraint::Min(0)])
-        .horizontal_margin(2)
-        .split(area);
+    // The lower half is the activity log. Every progress line the OAuth flow
+    // emits went to a pane that was not on screen: "Opening your browser…",
+    // the URL to paste if nothing opens — which is the line that rescues
+    // anybody on a headless or remote machine — and the failure message if it
+    // went wrong. The one screen where the log matters most was the one
+    // screen that did not draw it.
+    let areas = Layout::vertical([
+        Constraint::Length(6),
+        Constraint::Min(0),
+        Constraint::Length(9),
+    ])
+    .horizontal_margin(2)
+    .split(area);
 
     frame.render_widget(
         Paragraph::new(vec![
@@ -389,6 +399,10 @@ fn draw_login(frame: &mut Frame, area: Rect, app: &App) {
 
             let state = if !configured {
                 " — no credentials yet (press c)"
+            } else if app.busy && ticked && !authorised {
+                // While a login is running, say which platform is waiting on
+                // the browser rather than leaving the screen unchanged.
+                " — waiting for your browser…"
             } else if authorised {
                 " — already authorised, logging in again replaces it"
             } else {
@@ -420,6 +434,7 @@ fn draw_login(frame: &mut Frame, area: Rect, app: &App) {
         .collect();
 
     frame.render_widget(List::new(items), areas[1]);
+    draw_log(frame, areas[2], app);
 }
 
 /// The combined tab: channel state on top, both chats underneath.

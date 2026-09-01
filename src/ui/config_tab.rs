@@ -871,10 +871,26 @@ fn draw_accounts(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
         .enumerate()
         .map(|(index, platform)| {
             let selected = index == config.cursor && config.focus == Focus::Contents;
-            let state = match app.logged_in.get(platform) {
-                Some(true) => ("logged in", sk.success),
-                _ => ("not logged in", sk.muted),
+            let logged_in = app.logged_in.get(platform).copied().unwrap_or(false);
+            // Who, not merely whether. With two accounts on one machine the
+            // only question at this screen is which one you are about to
+            // stream as, and the store has known the answer all along.
+            let state = match (logged_in, app.account_summary(*platform)) {
+                (true, Some((name, expires, renews))) => (
+                    format!(
+                        "logged in as {name} · {} · expires in {expires}",
+                        if renews {
+                            "renews automatically"
+                        } else {
+                            "no refresh token"
+                        }
+                    ),
+                    if renews { sk.success } else { sk.warning },
+                ),
+                (true, None) => ("logged in".to_string(), sk.success),
+                (false, _) => ("not logged in".to_string(), sk.muted),
             };
+            let armed = app.logout_armed == Some(*platform);
             let mut line = Line::from(vec![
                 Span::styled(
                     if selected { "▸ " } else { "  " },
@@ -884,7 +900,14 @@ fn draw_accounts(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
                     format!("{:<10}", platform.label()),
                     Style::new().fg(sk.foreground),
                 ),
-                Span::styled(state.0, Style::new().fg(state.1)),
+                if armed {
+                    Span::styled(
+                        "press enter again to log out · esc cancels".to_string(),
+                        Style::new().fg(sk.error).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled(state.0, Style::new().fg(state.1))
+                },
             ]);
             if selected {
                 line = line.style(Style::new().bg(sk.selection));

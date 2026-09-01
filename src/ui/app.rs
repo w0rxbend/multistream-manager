@@ -291,6 +291,8 @@ pub struct App {
     /// a hardcoded ten lines, which is a page and a half on a laptop and a
     /// third of one on a tall terminal.
     pub terminal_area: ratatui::layout::Rect,
+    /// Which platform's logout is armed and waiting for a second Enter.
+    pub logout_armed: Option<Platform>,
     /// The abandoned broadcasts the last listing showed.
     ///
     /// Held so the confirming press can send back exactly what was on screen
@@ -567,6 +569,7 @@ impl App {
             auto_stop: plan.youtube_auto_stop,
             popup: None,
             terminal_area: ratatui::layout::Rect::default(),
+            logout_armed: None,
             stale_broadcasts: Vec::new(),
             youtube_streams: Vec::new(),
             reported_shortcut_clashes: std::collections::HashSet::new(),
@@ -1272,11 +1275,12 @@ impl App {
         };
         let rows = config.rows(self);
 
-        // Moving disarms the delete. An armed confirmation that survives
-        // walking away and coming back is one that fires on a keypress the
-        // user has forgotten they were part-way through — and this one
-        // deletes broadcasts.
+        // Moving disarms both confirmations. One that survives walking away
+        // and coming back fires on a keypress the user has forgotten they
+        // were part-way through — and these two delete broadcasts and throw
+        // away a login.
         config.cleanup_listed = false;
+        self.logout_armed = None;
 
         match config.focus {
             Focus::Sections => {
@@ -1402,6 +1406,12 @@ impl App {
         }
 
         match key.code {
+            KeyCode::Esc if self.logout_armed.is_some() => {
+                self.logout_armed = None;
+                self.notify(super::toast::Level::Info, "Logout cancelled.");
+                self.config_tab = Some(config);
+                return vec![];
+            }
             KeyCode::Esc => {
                 // Leaving with an unsaved layout throws the edit away rather
                 // than keeping it half-applied, and says so.
@@ -1772,11 +1782,28 @@ impl App {
         };
 
         if self.logged_in.get(&platform).copied().unwrap_or(false) {
-            self.logged_in.insert(platform, false);
+            // Armed, the way ending a broadcast is. One key doing both "log
+            // in" and "log out" meant a stray Enter on this row threw away a
+            // login and the browser round trip needed to get it back.
+            if self.logout_armed != Some(platform) {
+                self.logout_armed = Some(platform);
+                self.notify(
+                    super::toast::Level::Warning,
+                    format!(
+                        "Press enter again to log out of {} — esc cancels.",
+                        platform.label()
+                    ),
+                );
+                return vec![];
+            }
+            self.logout_armed = None;
             self.notify(
                 super::toast::Level::Info,
                 format!("Logging out of {}…", platform.label()),
             );
+            // The flag is set from the worker's answer, not here: clearing it
+            // now meant a logout that failed to write left the screen saying
+            // you were logged out while the token was still on disk.
             vec![Command::Logout(platform)]
         } else {
             if self.config.check_credentials(&[platform]).is_err() {
@@ -2360,6 +2387,31 @@ impl App {
         }
     }
 
+    /// Who each platform is logged in as, and how long the token has, for
+    /// the Accounts section.
+    ///
+    /// Read from the store rather than kept in state: the section is not on
+    /// screen most of the time, and the answer changes underneath the program
+    /// when a token refreshes. Two booleans were all the screen showed, when
+    /// the store holds the account name, the expiry and whether it can renew
+    /// itself — and with two accounts on one machine the only question at
+    /// this screen is which one you are about to stream as.
+    pub fn account_summary(&self, platform: Platform) -> Option<(String, String, bool)> {
+        let store = crate::auth::store::TokenStore::load().ok()?;
+        let tokens = store.get(platform)?;
+        let name = tokens
+            .identity
+            .as_ref()
+            .map(|identity| identity.display_name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "an unnamed account".to_string());
+        Some((
+            name,
+            tokens.expires_in_human(),
+            tokens.refresh_token.is_some(),
+        ))
+    }
+
     /// Take the diagnostics again, if that pane is what is on screen.
     ///
     /// The snapshot was taken when the section was opened and on `r`, and
@@ -2425,6 +2477,15 @@ impl App {
     /// of logging in was to get to the main view.
     pub fn handle_event(&mut self, event: Event) -> Vec<Command> {
         match event {
+            Event::LoggedOut { platform, result } => {
+                // Only on success. A logout that failed to write leaves the
+                // token on disk, so the screen has to keep saying the login
+                // is there — the worker has already logged why it is.
+                if result.is_ok() {
+                    self.logged_in.insert(platform, false);
+                }
+                self.refresh_diagnostics_if_showing();
+            }
             Event::StaleBroadcasts(found) => {
                 // An empty list means the job finished — nothing is armed any
                 // more, whether it deleted, found nothing, or failed.
@@ -6514,6 +6575,59 @@ mod tests {
         );
         // And from below, unity is still the ceiling.
         assert_eq!((0.98f64 + 0.05).clamp(0.0, 0.98f64.max(1.0)), 1.0);
+    }
+
+    /// Logging out throws away a browser round trip. One key doing both
+    /// "log in" and "log out" meant a stray Enter cost it.
+    #[test]
+    fn logging_out_asks_twice() {
+        let mut app = app();
+        app.logged_in.insert(Platform::Twitch, true);
+        go_to_config_section(&mut app, super::super::config_tab::Section::Accounts);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+
+        let first = app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(first.is_empty(), "the first press only arms it: {first:?}");
+        assert_eq!(app.logout_armed, Some(Platform::Twitch));
+        assert!(
+            app.logged_in[&Platform::Twitch],
+            "and must not report it as done"
+        );
+
+        let second = app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(matches!(
+            second.as_slice(),
+            [Command::Logout(Platform::Twitch)]
+        ));
+    }
+
+    /// Esc has to call it off, and the flag only clears when the worker says
+    /// the token actually left the disk.
+    #[test]
+    fn a_logout_can_be_cancelled_and_is_reported_from_its_result() {
+        let mut app = app();
+        app.logged_in.insert(Platform::Twitch, true);
+        go_to_config_section(&mut app, super::super::config_tab::Section::Accounts);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        app.handle_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.logout_armed, None, "esc cancels");
+        assert!(app.logged_in[&Platform::Twitch]);
+
+        // A logout that failed to write must leave the screen saying the
+        // login is still there, because it is.
+        app.handle_event(Event::LoggedOut {
+            platform: Platform::Twitch,
+            result: Err("the disk is full".into()),
+        });
+        assert!(app.logged_in[&Platform::Twitch], "the token is still there");
+
+        app.handle_event(Event::LoggedOut {
+            platform: Platform::Twitch,
+            result: Ok(()),
+        });
+        assert!(!app.logged_in[&Platform::Twitch]);
     }
 
     /// There was no paste anywhere: a 5000-character YouTube description had
