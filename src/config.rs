@@ -47,6 +47,22 @@ pub struct Config {
     pub layout: crate::layout::LayoutFile,
     /// The saved stream settings the form starts from.
     pub preset: PresetConfig,
+
+    /// Named alternatives to `[preset]`, as `[profile.speedrun]` and so on.
+    ///
+    /// One set of stream settings covers one kind of stream. Somebody who
+    /// alternates between a speedrun and a coding session was retyping the
+    /// title, the tags and both categories every time — or keeping two config
+    /// files and swapping them.
+    ///
+    /// `[preset]` stays the unnamed default, so a config written before this
+    /// existed keeps working exactly as it did.
+    #[serde(default)]
+    pub profile: std::collections::BTreeMap<String, PresetConfig>,
+
+    /// Which named profile is in use. Empty means the unnamed `[preset]`.
+    #[serde(default)]
+    pub active_profile: String,
 }
 
 /// How the interface looks and how much it moves.
@@ -1225,6 +1241,28 @@ impl Config {
 
         paths::write_secret_file(&path, &text)?;
         Ok(())
+    }
+
+    /// The stream settings in force: the active named profile, or the
+    /// unnamed `[preset]` when none is chosen.
+    ///
+    /// An `active_profile` naming a profile that is not there falls back to
+    /// the default rather than refusing to start — a typo in a name should
+    /// cost you the right settings, not the program.
+    pub fn active_preset(&self) -> &PresetConfig {
+        self.profile
+            .get(self.active_profile.trim())
+            .unwrap_or(&self.preset)
+    }
+
+    /// Every profile name, plus the unnamed default first.
+    ///
+    /// The empty string stands for `[preset]`, which is what
+    /// `active_profile` uses for it.
+    pub fn profile_names(&self) -> Vec<String> {
+        let mut names = vec![String::new()];
+        names.extend(self.profile.keys().cloned());
+        names
     }
 
     /// Everything [`crate::engine::Engine::build`] reads out of the

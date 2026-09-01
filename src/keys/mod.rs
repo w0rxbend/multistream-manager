@@ -350,6 +350,7 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Global, "<Leader>sy", Action::CopyTwitchKey),
     (Context::Global, "<Leader>sY", Action::CopyYouTubeKey),
     (Context::Global, "<Leader>so", Action::OpenWatchPage),
+    (Context::Global, "<Leader>sp", Action::StreamNextProfile),
 
     // The Config tab. These were hardcoded key matches until they became
     // actions, which is what makes them rebindable and what puts them in

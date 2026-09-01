@@ -931,6 +931,36 @@ The default stream settings — what the form is filled in with when the interfa
 opens. <kbd>Ctrl</kbd>+<kbd>S</kbd> in the form writes whatever you have typed
 back here, so you can build a preset once by hand and never retype it.
 
+### Named profiles
+
+One set of stream settings covers one kind of stream. If you alternate between
+a speedrun and a coding session, `[profile.<name>]` tables hold a set each:
+
+```toml
+[profile.speedrun]
+title = "any% attempts until I get a PB"
+tags = ["speedrun", "any"]
+twitch_category = "Hollow Knight"
+
+[profile.coding]
+title = "building a terminal app in Rust"
+tags = ["rust", "programming"]
+twitch_category = "Software and Game Development"
+```
+
+<kbd>&lt;Leader&gt;</kbd> <kbd>s</kbd> <kbd>p</kbd> cycles through them — the
+name appears in the header — and <kbd>Ctrl</kbd>+<kbd>S</kbd> saves back into
+whichever one you are on rather than overwriting the unnamed default. The
+choice is remembered in `active_profile`, so it survives a restart.
+
+`[preset]` stays the unnamed default and is the first stop in the cycle, so a
+config written before this existed keeps working exactly as it did. An
+`active_profile` naming a profile that is not there falls back to the default —
+a typo in a name should cost you the right settings, not the program.
+
+Borrowed from Restream's stream groups and Castr's destination sets. A profile
+carries the same fields as `[preset]` below.
+
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `title` | string | `""` | The stream title, sent to both platforms. Twitch accepts 140 characters, YouTube 100. |

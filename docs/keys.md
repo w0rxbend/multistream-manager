@@ -184,6 +184,7 @@ rather read a list than remember a letter.
 | <kbd>s</kbd> <kbd>y</kbd> | `stream.copy_twitch_key` | Copy the Twitch stream key |
 | <kbd>s</kbd> <kbd>Y</kbd> | `stream.copy_youtube_key` | Copy the YouTube stream key |
 | <kbd>s</kbd> <kbd>o</kbd> | `stream.open_watch_page` | Open the watch page in a browser |
+| <kbd>s</kbd> <kbd>p</kbd> | `stream.next_profile` | Switch to the next named stream profile |
 
 AstroNvim puts search on `s`. This program's whole subject is streaming, so the
 letter goes to that and find keeps `f`.

@@ -451,7 +451,7 @@ impl App {
 
     /// Build the initial state around an existing quota ledger.
     pub fn with_ledger(config: Config, ledger: crate::quota::QuotaStore) -> Self {
-        let preset = config.preset.clone();
+        let preset = config.active_preset().clone();
         let plan = preset.to_plan();
 
         let mut inputs = BTreeMap::new();
@@ -1052,6 +1052,7 @@ impl App {
             // the whole reason a bookmark in the VOD beats scrubbing for it
             // later.
             Action::ChatMarker => self.chat.mark_moment(),
+            Action::StreamNextProfile => return self.next_profile(),
 
             // The Config tab's own keys, as named actions rather than the
             // hardcoded `KeyCode` matches they used to be. Being actions is
@@ -4428,15 +4429,102 @@ impl App {
     }
 
     /// Write the current form values back to `config.toml` as the new defaults.
+    /// Switch to the next named stream profile, loading its settings into the
+    /// form.
+    ///
+    /// Borrowed from Restream's stream groups and Castr's destination sets.
+    /// One set of stream settings covers one kind of stream; somebody who
+    /// alternates between a speedrun and a coding session was retyping the
+    /// title, the tags and both categories every time.
+    fn next_profile(&mut self) -> Vec<Command> {
+        let names = self.config.profile_names();
+        if names.len() < 2 {
+            self.notify(
+                super::toast::Level::Info,
+                "No named profiles yet — add a [profile.<name>] table to config.toml.",
+            );
+            return vec![];
+        }
+
+        let current = names
+            .iter()
+            .position(|name| name == self.config.active_profile.trim())
+            .unwrap_or(0);
+        let next = names[(current + 1) % names.len()].clone();
+        self.config.active_profile = next.clone();
+        self.load_active_profile();
+
+        let label = if next.is_empty() {
+            "the default settings".to_string()
+        } else {
+            next
+        };
+        self.notify(
+            super::toast::Level::Info,
+            format!("Stream profile: {label}"),
+        );
+        // Saved so the choice survives a restart, and so the worker sees a
+        // config that matches the form.
+        self.save_appearance()
+    }
+
+    /// Put the active profile's settings into the form.
+    fn load_active_profile(&mut self) {
+        let preset = self.config.active_preset().clone();
+        let plan = preset.to_plan();
+
+        self.set_field(Field::Title, plan.title.clone());
+        self.set_field(Field::Description, plan.description.clone());
+        self.set_field(Field::Tags, plan.tags_input());
+        self.set_field(Field::TwitchCategory, preset.twitch_category.clone());
+        self.set_field(
+            Field::YouTubeCategory,
+            crate::youtube::category_name(&plan.youtube_category_id),
+        );
+        self.set_field(Field::Language, plan.language.clone());
+
+        self.twitch_category = plan.twitch_category.clone();
+        self.youtube_category_id = plan.youtube_category_id.clone();
+        self.privacy = plan.privacy;
+        self.made_for_kids = plan.made_for_kids;
+        self.auto_start = plan.youtube_auto_start;
+        self.auto_stop = plan.youtube_auto_stop;
+        // Switching profile is not editing the tags by hand, so an empty tag
+        // list still means "leave the channel's alone".
+        self.tags_edited = false;
+        if !preset.platforms.is_empty() {
+            self.selected = preset.platforms.clone();
+        }
+    }
+
+    fn set_field(&mut self, field: Field, value: String) {
+        if let Some(input) = self.inputs.get_mut(&field) {
+            input.set(value);
+        }
+    }
+
     fn save_preset(&mut self) {
         let plan = self.plan();
         let mut config = self.config.clone();
-        config.preset = PresetConfig::from_plan(&plan, &self.selected);
+        let saved = PresetConfig::from_plan(&plan, &self.selected);
+        // Into the active profile, so Ctrl+S means "keep this" rather than
+        // "overwrite the one unnamed set of settings".
+        let name = config.active_profile.trim().to_string();
+        let label = if name.is_empty() {
+            config.preset = saved;
+            "your defaults".to_string()
+        } else {
+            config.profile.insert(name.clone(), saved);
+            format!("the {name} profile")
+        };
 
         match config.save() {
             Ok(()) => {
                 self.config = config;
-                self.push_log(LogLevel::Success, "Saved these settings as your defaults.");
+                self.push_log(
+                    LogLevel::Success,
+                    format!("Saved these settings as {label}."),
+                );
                 self.notify(super::toast::Level::Success, "Saved to config.toml.");
             }
             Err(err) => {
@@ -6652,6 +6740,75 @@ mod tests {
         );
         // And from below, unity is still the ceiling.
         assert_eq!((0.98f64 + 0.05).clamp(0.0, 0.98f64.max(1.0)), 1.0);
+    }
+
+    /// One set of stream settings covers one kind of stream. Somebody who
+    /// alternates between a speedrun and a coding session was retyping the
+    /// title, the tags and both categories every time.
+    #[test]
+    fn switching_profile_loads_its_settings_and_saves_back_into_it() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("profiles");
+        let mut config = Config::default();
+        config.preset.title = "the default title".into();
+        config.profile.insert(
+            "speedrun".into(),
+            crate::config::PresetConfig {
+                title: "any% attempts".into(),
+                ..Default::default()
+            },
+        );
+
+        let mut app = App::new(config);
+        app.splash_skipped = true;
+        app.screen = Screen::Form;
+
+        assert_eq!(
+            app.inputs.get(&Field::Title).unwrap().value(),
+            "the default title",
+            "the unnamed preset is where it starts"
+        );
+
+        app.next_profile();
+        assert_eq!(app.config.active_profile, "speedrun");
+        assert_eq!(
+            app.inputs.get(&Field::Title).unwrap().value(),
+            "any% attempts",
+            "switching loads that profile's settings into the form"
+        );
+
+        // Ctrl+S keeps them in the profile you are on, rather than
+        // overwriting the one unnamed set.
+        app.inputs
+            .get_mut(&Field::Title)
+            .unwrap()
+            .set("any% attempts (day 2)");
+        app.save_preset();
+        assert_eq!(
+            app.config.profile["speedrun"].title,
+            "any% attempts (day 2)"
+        );
+        assert_eq!(
+            app.config.preset.title, "the default title",
+            "the default is left alone"
+        );
+
+        // …and round again returns to the default.
+        app.next_profile();
+        assert_eq!(app.config.active_profile, "");
+        assert_eq!(
+            app.inputs.get(&Field::Title).unwrap().value(),
+            "the default title"
+        );
+    }
+
+    /// An `active_profile` naming something that is not there falls back to
+    /// the default rather than refusing to start.
+    #[test]
+    fn an_unknown_active_profile_falls_back_to_the_default() {
+        let mut config = Config::default();
+        config.preset.title = "the default".into();
+        config.active_profile = "typo".into();
+        assert_eq!(config.active_preset().title, "the default");
     }
 
     /// Streamer mode follows OBS by default, and can be forced either way for

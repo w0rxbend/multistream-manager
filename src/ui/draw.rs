@@ -656,6 +656,17 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
+    // Which stream profile is in force. Only when there is a choice to make:
+    // with no named profiles this is one more thing on a row that already
+    // carries the platforms and the health strip.
+    if !app.config.active_profile.trim().is_empty() {
+        spans.push(Span::styled("  ·  ", Style::new().fg(sk.border)));
+        spans.push(Span::styled(
+            app.config.active_profile.trim().to_string(),
+            Style::new().fg(sk.accent).add_modifier(Modifier::BOLD),
+        ));
+    }
+
     // Streamer mode says so. A screen that is quietly hiding things has to
     // admit it, or somebody stares at a masked field wondering why their
     // client id has vanished.
