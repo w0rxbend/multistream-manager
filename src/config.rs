@@ -1669,4 +1669,116 @@ mod tests {
             "a changed client id must force a rebuild"
         );
     }
+
+    /// Characterization tests for the comment-preserving save.
+    ///
+    /// `save` is the one place where hand-written configuration and generated
+    /// configuration meet, and it is the reason a user can keep their own
+    /// comments in `config.toml` and still press Ctrl+S in the form. Nothing
+    /// about that behaviour was pinned by a test, so these lock down what it
+    /// does today before anything else in this file is moved around.
+    mod saving {
+        use super::*;
+
+        /// Build a config pointed at a scratch file that already contains
+        /// `existing`, run `change` over it, save, and hand back what landed
+        /// on disk.
+        fn save_over(name: &str, existing: &str, change: impl FnOnce(&mut Config)) -> String {
+            let dir = std::env::temp_dir().join(format!("msm-save-{name}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("creating the scratch directory");
+            let path = dir.join("config.toml");
+            std::fs::write(&path, existing).expect("writing the starting file");
+
+            // Parsed from the file first, exactly as production does: `save`
+            // writes every field of the struct, so a config that was never
+            // loaded would overwrite the file with defaults. An unparseable
+            // file falls back to defaults, which is what `Config::load` does.
+            let mut config: Config = toml::from_str(existing).unwrap_or_default();
+            config.source_path = Some(path.clone());
+            change(&mut config);
+            config.save().expect("saving must work");
+
+            let text = std::fs::read_to_string(&path).expect("reading the saved file");
+            let _ = std::fs::remove_dir_all(&dir);
+            text
+        }
+
+        #[test]
+        fn comments_and_unknown_keys_survive_a_save() {
+            let saved = save_over(
+                "comments",
+                "\
+# my own note about credentials
+[twitch]
+# the id from the developer console
+client_id = \"old-id\"
+something_this_version_never_heard_of = 7
+
+[preset]
+# what I usually stream
+title = \"old title\"
+",
+                |config| {
+                    config.twitch.client_id = "new-id".into();
+                    config.preset.title = "new title".into();
+                },
+            );
+
+            assert!(
+                saved.contains("# my own note about credentials"),
+                "a top-level comment must survive: {saved}"
+            );
+            assert!(
+                saved.contains("# the id from the developer console"),
+                "a comment above a changed key must survive: {saved}"
+            );
+            assert!(
+                saved.contains("# what I usually stream"),
+                "a comment inside a table must survive: {saved}"
+            );
+            assert!(
+                saved.contains("something_this_version_never_heard_of = 7"),
+                "a key this version does not know must not be pruned: {saved}"
+            );
+            assert!(
+                saved.contains("client_id = \"new-id\""),
+                "the changed value must be written: {saved}"
+            );
+            assert!(
+                !saved.contains("old-id"),
+                "the old value must be gone: {saved}"
+            );
+        }
+
+        #[test]
+        fn a_setting_the_file_has_never_had_is_appended() {
+            let saved = save_over("append", "[twitch]\nclient_id = \"id\"\n", |config| {
+                config.twitch.client_secret = "brand-new".into();
+            });
+
+            assert!(
+                saved.contains("brand-new"),
+                "a key absent from the file must be added: {saved}"
+            );
+            assert!(saved.contains("client_id = \"id\""), "and the old one kept");
+        }
+
+        /// The documented fallback: a file that cannot be parsed has nothing
+        /// worth merging into, so a complete new one is written. This is
+        /// destructive — it is recorded here so that it is a decision rather
+        /// than a surprise.
+        #[test]
+        fn an_unparseable_file_is_replaced_with_a_complete_new_one() {
+            let saved = save_over("damaged", "this is not = = toml at [[ all", |_| {});
+
+            assert!(
+                saved.starts_with(CONFIG_HEADER),
+                "the replacement must carry the explanatory header: {saved}"
+            );
+            assert!(
+                !saved.contains("not = = toml"),
+                "the damaged content is not preserved: {saved}"
+            );
+        }
+    }
 }
