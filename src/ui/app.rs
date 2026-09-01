@@ -45,6 +45,20 @@ pub const FILE_ROWS: [FileRow; 3] = [
     ("Log", crate::paths::log_file),
 ];
 
+/// Something drawn over the interface that owns the screen while it is up.
+///
+/// In precedence order — the order `handle_key` resolves them in, which is
+/// the order they are drawn over each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
+    WhichKeyAll,
+    Splash,
+    Preflight,
+    CommandPalette,
+    MessageHistory,
+    ThemePicker,
+}
+
 /// What a form field starts out holding.
 ///
 /// One place, so the constructor and the profile switcher cannot disagree
@@ -3780,7 +3794,11 @@ impl App {
             return vec![];
         }
 
-        let overlay_open = self.toasts.history_open || self.theme_picker.is_some();
+        // Every overlay, from the one chain the key handler uses. This used
+        // to name two of the six, so a click while the which-key listing, the
+        // pre-flight checklist or the command palette was up acted on
+        // whatever was underneath and out of sight.
+        let overlay_open = self.overlay().is_some();
 
         let action = super::mouse::action_for(
             event,
@@ -4040,6 +4058,41 @@ impl App {
     /// A setting toggled from a key has to survive a restart, or it is not a
     /// setting — it is a thing you have to redo every session. A failed write
     /// is reported and the change stays in effect for this run.
+    /// What is covering the interface, if anything.
+    ///
+    /// One ordered chain, so the three places that need to know cannot
+    /// disagree. They did: `handle_key` resolved six overlays in this order,
+    /// while `handle_mouse` asked only about the message history and the
+    /// theme picker — so a click landing while the which-key listing, the
+    /// pre-flight checklist or the command palette was up acted on whatever
+    /// was *underneath* it, which the user could not see.
+    ///
+    /// A part-typed chord is deliberately not in here. The drawing treats it
+    /// as full-screen, but `handle_key` resolves it later than these — after
+    /// the modal screens — so folding it in would change key routing rather
+    /// than describe it.
+    pub fn overlay(&self) -> Option<Overlay> {
+        if self.which_key_all {
+            return Some(Overlay::WhichKeyAll);
+        }
+        if self.splash_is_showing() {
+            return Some(Overlay::Splash);
+        }
+        if self.preflight.is_some() {
+            return Some(Overlay::Preflight);
+        }
+        if self.command_palette.is_some() {
+            return Some(Overlay::CommandPalette);
+        }
+        if self.toasts.history_open {
+            return Some(Overlay::MessageHistory);
+        }
+        if self.theme_picker.is_some() {
+            return Some(Overlay::ThemePicker);
+        }
+        None
+    }
+
     /// Write a change to config.toml, and tell the worker.
     ///
     /// The one place that knows how a configuration change is committed.
@@ -7294,6 +7347,52 @@ mod tests {
             result: Ok(()),
         });
         assert!(!app.logged_in[&Platform::Twitch]);
+    }
+
+    /// A click while an overlay is up must not act on what is underneath it,
+    /// which the user cannot see. The mouse gate named two of the six.
+    #[test]
+    fn every_overlay_blocks_a_click_on_what_is_beneath_it() {
+        /// An overlay, and how to put it on screen.
+        type ShowOverlay = (&'static str, fn(&mut App));
+
+        let open: [ShowOverlay; 5] = [
+            ("which-key", |app| app.which_key_all = true),
+            ("preflight", |app| app.open_preflight()),
+            ("command palette", |app| {
+                app.command_palette = Some(super::super::command_palette::CommandPalette::open(
+                    &app.keymap,
+                    crate::keys::Context::StreamInfo,
+                ))
+            }),
+            ("message history", |app| app.toasts.open_history()),
+            ("theme picker", |app| {
+                app.theme_picker = Some(super::super::theme_picker::ThemePicker::open(
+                    &app.config.appearance.theme,
+                    &app.palette,
+                ))
+            }),
+        ];
+
+        for (what, show) in open {
+            let mut app = app();
+            app.tab = Tab::Chat;
+            assert!(app.overlay().is_none(), "{what}: nothing is up yet");
+
+            show(&mut app);
+            assert!(app.overlay().is_some(), "{what} has to count as an overlay");
+
+            // A click on the tab bar would otherwise switch tabs behind it.
+            let click = crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 1,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            };
+            let before = app.tab;
+            app.handle_mouse(click, ratatui::layout::Rect::new(0, 0, 100, 30));
+            assert_eq!(app.tab, before, "{what}: the click must not reach the tabs");
+        }
     }
 
     /// Ctrl+S wrote config.toml and forgot to tell the worker, which holds
