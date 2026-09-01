@@ -122,6 +122,11 @@ impl Layout {
     }
 }
 
+/// How many rows the combined tab's stream-info block takes above the chat
+/// panes. Shared so the hit-testing and the chat paging agree about where the
+/// panes actually start.
+pub const STREAM_INFO_HEIGHT: u16 = 7;
+
 /// What is under the pointer.
 ///
 /// `chat_showing` says whether the body is chat panes at all, and
@@ -148,7 +153,7 @@ pub fn target_at(
 
     let mut chat_area = layout.body;
     if combined {
-        const STREAM_INFO_HEIGHT: u16 = 7;
+
         let stream_info = Rect {
             height: STREAM_INFO_HEIGHT.min(chat_area.height),
             ..chat_area

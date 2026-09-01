@@ -303,6 +303,17 @@ pub async fn run(config: Config) -> Result<()> {
             }
         }
 
+        // Recorded before the draw so the key handling can size things to the
+        // screen — paging chat by the height of the pane, for one.
+        if let Ok(size) = guard.terminal.size() {
+            app.terminal_area = ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: size.width,
+                height: size.height,
+            };
+        }
+
         guard
             .terminal
             .draw(|frame| draw::draw(frame, &app))

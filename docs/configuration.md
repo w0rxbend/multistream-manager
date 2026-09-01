@@ -645,10 +645,17 @@ Both are resolved in a fixed order — an exact shortcut, then an exact alias,
 then the exact OBS name, then the same three ignoring case. The order is fixed
 so that adding a scene can never silently change what an existing alias means.
 
-> [!NOTE]
-> Shortcuts take precedence over the tab's own keys, so binding `s` to a scene
-> means `s` no longer starts the stream on that tab. Bind digits and letters
-> the tab does not use: `s`, `r`, `p`, `m`, `M`, `P`, `C`, `R`, `u`, `h`, `l`,
+> [!IMPORTANT]
+> The tab's own keys take precedence, not the shortcuts. A shortcut is
+> resolved only after the keymap has had its say, so that a shortcut can never
+> shadow a real binding and so rebinding or removing a key does what it says.
+>
+> The consequence is that a shortcut which collides with a binding does
+> **nothing at all** — giving a scene the shortcut `s` produces a key that
+> starts the stream instead of switching to that scene. The program now says
+> so in the activity log when it first sees the collision, naming both the
+> shortcut and the binding in its way. Bind digits and letters the tab does not
+> use: `s`, `r`, `p`, `m`, `M`, `P`, `C`, `R`, `u`, `h`, `l`,
 > `j`, `k` and `q` all already do something — the full list is in
 > [Keys and actions](keys.md#obs).
 

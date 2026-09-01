@@ -379,7 +379,8 @@ what to use instead. If you genuinely want a message that starts with a slash,
 | <kbd>Enter</kbd> | `obs.activate` | Switch to the scene, or toggle the input's mute |
 | <kbd>m</kbd> | `obs.mute` | Mute or unmute the selected input, from either list |
 | <kbd>M</kbd> | `obs.mute_all` | **Mute everything** — the panic key |
-| <kbd>+</kbd> / <kbd>=</kbd> / <kbd>-</kbd> | `obs.volume_up` / `obs.volume_down` | Nudge the selected input's level |
+| <kbd>+</kbd> / <kbd>=</kbd> / <kbd>-</kbd> | `obs.volume_up` / `obs.volume_down` | Nudge the selected input's level by 5% |
+| <kbd>]</kbd> / <kbd>[</kbd> | `obs.volume_up_fine` / `obs.volume_down_fine` | The same, by 1%, for settling on a level rather than finding one |
 | <kbd>s</kbd> / <kbd>r</kbd> | `obs.stream` / `obs.record` | Start or stop streaming / recording |
 | <kbd>p</kbd> | `obs.pause_recording` | Pause or resume a recording |
 | <kbd>P</kbd> / <kbd>C</kbd> | `obs.next_profile` / `obs.next_collection` | Cycle profiles / scene collections |
@@ -681,6 +682,8 @@ dot is the group the action appears under in the which-key popup.
 | `obs.mute` | Toggle mute |
 | `obs.mute_all` | Mute everything |
 | `obs.volume_up` | Volume up |
+| `obs.volume_up_fine` | Volume up a little |
+| `obs.volume_down_fine` | Volume down a little |
 | `obs.volume_down` | Volume down |
 | `obs.stream` | Start/stop streaming |
 | `obs.record` | Start/stop recording |

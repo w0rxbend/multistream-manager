@@ -144,6 +144,17 @@ pub struct PendingSearch {
 /// point is that a request is spent per *word* rather than per keystroke.
 const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(180);
 
+/// How much one press of the volume keys moves an OBS input.
+///
+/// Five percent is the right size for finding roughly the level you want.
+const VOLUME_STEP: f64 = 0.05;
+
+/// …and the fine step, for settling on it.
+///
+/// Five percent is a large jump when a microphone is nearly right, and the
+/// only alternative was opening OBS itself.
+const VOLUME_STEP_FINE: f64 = 0.01;
+
 /// The autocomplete list that drops down under a field.
 #[derive(Debug, Clone)]
 pub struct Popup {
@@ -273,6 +284,16 @@ pub struct App {
     pub auto_stop: bool,
 
     pub popup: Option<Popup>,
+    /// The terminal's size as of the last frame.
+    ///
+    /// Recorded by the event loop so that key handling can size things to the
+    /// screen — paging through chat by the height of the pane rather than by
+    /// a hardcoded ten lines, which is a page and a half on a laptop and a
+    /// third of one on a tall terminal.
+    pub terminal_area: ratatui::layout::Rect,
+    /// OBS shortcuts already reported as shadowed, so the warning is said
+    /// once rather than on every snapshot — which arrives once a second.
+    reported_shortcut_clashes: std::collections::HashSet<String>,
     /// The pre-flight checklist, while it is on screen.
     ///
     /// Computed when the overlay opens rather than every frame, because it
@@ -531,6 +552,8 @@ impl App {
             auto_start: plan.youtube_auto_start,
             auto_stop: plan.youtube_auto_stop,
             popup: None,
+            terminal_area: ratatui::layout::Rect::default(),
+            reported_shortcut_clashes: std::collections::HashSet::new(),
             preflight: None,
             end_armed: None,
             search_generation: 0,
@@ -1007,8 +1030,8 @@ impl App {
             }
             Action::ChatScrollUp => self.chat.select_move(1),
             Action::ChatScrollDown => self.chat.select_move(-1),
-            Action::ChatPageUp => self.chat.scroll_by(10),
-            Action::ChatPageDown => self.chat.scroll_by(-10),
+            Action::ChatPageUp => self.chat.scroll_by(self.chat_page()),
+            Action::ChatPageDown => self.chat.scroll_by(-self.chat_page()),
             Action::ChatToTop => self.chat.scroll_to_end(true),
             Action::ChatToBottom => self.chat.scroll_to_end(false),
             Action::ChatFocusNextPane => self.chat.focus_other(),
@@ -1059,8 +1082,10 @@ impl App {
                 }
             }
             Action::ObsMuteAll => self.mute_all_obs_audio(),
-            Action::ObsVolumeUp => self.nudge_obs_volume(0.05),
-            Action::ObsVolumeDown => self.nudge_obs_volume(-0.05),
+            Action::ObsVolumeUp => self.nudge_obs_volume(VOLUME_STEP),
+            Action::ObsVolumeDown => self.nudge_obs_volume(-VOLUME_STEP),
+            Action::ObsVolumeUpFine => self.nudge_obs_volume(VOLUME_STEP_FINE),
+            Action::ObsVolumeDownFine => self.nudge_obs_volume(-VOLUME_STEP_FINE),
             Action::ObsToggleStream => self.obs_command(ObsCommand::ToggleStream),
             Action::ObsToggleRecord => self.obs_command(ObsCommand::ToggleRecord),
             Action::ObsPauseRecording => self.obs_command(ObsCommand::ToggleRecordPause),
@@ -1637,6 +1662,77 @@ impl App {
         }
     }
 
+    /// Say so when a config-defined OBS shortcut can never fire.
+    ///
+    /// `[obs]` lets a scene or an audio input carry a one-key shortcut, and
+    /// those keys are resolved *after* the keymap — deliberately, so that a
+    /// shortcut cannot shadow a real binding and so rebinding a key does what
+    /// it says. The consequence is the other way round: giving a scene the
+    /// shortcut `s` produces a key that silently does nothing, because `s`
+    /// is already "start or stop streaming" on this tab and gets there first.
+    ///
+    /// Nothing said so. The config loaded without complaint, the OBS pane
+    /// showed the scene, and the key started the stream instead of switching
+    /// to it. This reports each collision once per session, the way the
+    /// keymap already reports a shadowed binding.
+    fn report_shadowed_obs_shortcuts(&mut self) {
+        let taken: std::collections::HashMap<crate::keys::Key, crate::keys::Action> = self
+            .keymap
+            .all()
+            .into_iter()
+            // Single-key chords only: a shortcut is one key, so a chord that
+            // merely starts with it is not a collision.
+            .filter(|binding| binding.chord.len() == 1)
+            .filter(|binding| {
+                matches!(
+                    binding.context,
+                    crate::keys::Context::Obs | crate::keys::Context::Global
+                )
+            })
+            .map(|binding| (binding.chord[0], binding.action))
+            .collect();
+
+        let shortcuts: Vec<(String, String)> = self
+            .obs
+            .scenes
+            .iter()
+            .filter_map(|scene| {
+                scene
+                    .shortcut
+                    .as_ref()
+                    .map(|key| (key.clone(), format!("the scene {:?}", scene.name)))
+            })
+            .chain(self.obs.audio.iter().filter_map(|input| {
+                input
+                    .shortcut
+                    .as_ref()
+                    .map(|key| (key.clone(), format!("the input {:?}", input.name)))
+            }))
+            .collect();
+
+        for (shortcut, what) in shortcuts {
+            let mut chars = shortcut.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                continue;
+            };
+            let Some(action) = taken.get(&crate::keys::Key::char(c)) else {
+                continue;
+            };
+            if !self.reported_shortcut_clashes.insert(shortcut.clone()) {
+                continue;
+            }
+            self.push_log(
+                LogLevel::Warning,
+                format!(
+                    "The OBS shortcut {shortcut:?} for {what} will never fire: {shortcut:?} is \
+                     already \"{}\". Pick another letter in [obs], or rebind {} in [keys].",
+                    action.describe(),
+                    action.name()
+                ),
+            );
+        }
+    }
+
     /// The OBS tab's own keys.
     ///
     /// Only the *dynamic* ones live here: a scene or an audio input can be
@@ -1872,6 +1968,7 @@ impl App {
                     self.obs.connection = Connection::Connected;
                 }
                 self.clamp_obs_cursors();
+                self.report_shadowed_obs_shortcuts();
             }
             Update::Event(event) => {
                 event.apply(&mut self.obs);
@@ -2723,8 +2820,8 @@ impl App {
             // bottom-anchored log. The view follows the selection.
             KeyCode::Char('k') | KeyCode::Up => self.chat.select_move(1),
             KeyCode::Char('j') | KeyCode::Down => self.chat.select_move(-1),
-            KeyCode::PageUp => self.chat.scroll_by(10),
-            KeyCode::PageDown => self.chat.scroll_by(-10),
+            KeyCode::PageUp => self.chat.scroll_by(self.chat_page()),
+            KeyCode::PageDown => self.chat.scroll_by(-self.chat_page()),
             KeyCode::Esc => {
                 if self.chat.inspect {
                     self.chat.inspect = false;
@@ -2980,6 +3077,33 @@ impl App {
     /// Scroll whatever is currently scrollable, in the direction the wheel
     /// turned: the message history when it is open, the chat when it is
     /// showing, and otherwise the activity log.
+    /// How many messages one PageUp/PageDown moves through.
+    ///
+    /// The height of the focused chat pane, rather than a fixed ten: on a
+    /// short terminal ten lines was a page and a half, and on a tall one a
+    /// third of a page, so paging never lined up with what was on screen.
+    /// Falls back to ten before the first frame has been drawn, and always
+    /// leaves a couple of rows of overlap so the eye has something to
+    /// reattach to.
+    fn chat_page(&self) -> i64 {
+        const OVERLAP: u16 = 2;
+        const FALLBACK: i64 = 10;
+
+        let body = super::mouse::Layout::of(self.terminal_area).body;
+        // The combined tab puts a stream-info block above the panes.
+        let panes = if self.tab == Tab::Combined {
+            body.height.saturating_sub(super::mouse::STREAM_INFO_HEIGHT)
+        } else {
+            body.height
+        };
+        // One row of the pane is its header strip.
+        let rows = panes.saturating_sub(1);
+        if rows <= OVERLAP {
+            return FALLBACK;
+        }
+        i64::from(rows - OVERLAP)
+    }
+
     fn scroll(&mut self, back: bool) -> Vec<Command> {
         const WHEEL_LINES: isize = 3;
         if self.toasts.history_open {

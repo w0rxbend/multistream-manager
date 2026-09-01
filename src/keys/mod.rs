@@ -387,6 +387,8 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Obs, "m",            Action::ObsToggleMute),
     (Context::Obs, "M",            Action::ObsMuteAll),
     (Context::Obs, "+",            Action::ObsVolumeUp),
+    (Context::Obs, "]",            Action::ObsVolumeUpFine),
+    (Context::Obs, "[",            Action::ObsVolumeDownFine),
     (Context::Obs, "=",            Action::ObsVolumeUp),
     (Context::Obs, "-",            Action::ObsVolumeDown),
     (Context::Obs, "s",            Action::ObsToggleStream),
