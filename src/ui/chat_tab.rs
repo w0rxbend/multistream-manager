@@ -753,6 +753,13 @@ impl ChatTabState {
         }
     }
 
+    /// Insert pasted text into the composer at the caret.
+    pub fn compose_paste(&mut self, text: &str) {
+        if let Some(chat) = self.active_chat_mut() {
+            chat.state.draft.insert_str(text);
+        }
+    }
+
     /// Run one editing key over the composer.
     ///
     /// Everything the metadata form's fields have already understood —

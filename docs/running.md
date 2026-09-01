@@ -216,6 +216,19 @@ Every credential variable name is itself configurable — see
 
 ---
 
+## Pasting
+
+Your terminal's own paste works in every text box: the metadata form, the chat
+composer, and the credential fields on the setup screen. That last one is the
+point — a client secret is forty random characters nobody types by hand.
+
+This uses bracketed paste, which is how a terminal marks pasted text so it
+arrives as one lump rather than as a very fast burst of keystrokes. Without it
+a pasted description would have had every `q` in it quit the program. A
+terminal that does not support bracketed paste simply gets no paste, as before.
+
+Newlines become spaces, because every field and the composer are single lines.
+
 ## The config file
 
 You never have to create or edit it — the interface writes it — but it is a

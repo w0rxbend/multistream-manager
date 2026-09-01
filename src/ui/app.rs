@@ -2300,6 +2300,66 @@ impl App {
         }
     }
 
+    /// Insert pasted text wherever the keyboard currently is.
+    ///
+    /// Bracketed paste arrives as one event rather than a burst of
+    /// keystrokes, which is what makes this safe: read as typing, a paste
+    /// would run every `q` and `j` in it as a command. There was no paste at
+    /// all before — a 5000-character YouTube description had to be retyped,
+    /// and a chat message could not be pasted from a browser.
+    ///
+    /// Only the places that are genuinely text accept it. Everywhere else a
+    /// paste does nothing, which is better than scattering it into a screen
+    /// that was not expecting any.
+    pub fn handle_paste(&mut self, text: &str) -> Vec<Command> {
+        use super::chat_tab::ChatFocus;
+
+        // Newlines are not text here: every field and the composer are single
+        // lines, and a pasted paragraph should arrive as one line rather than
+        // sending a half-finished message per line break.
+        let text: String = text
+            .chars()
+            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+            .collect();
+        if text.is_empty() {
+            return vec![];
+        }
+
+        // The chat composer, when it has the keyboard.
+        if self.chat_has_the_keyboard() && self.chat.mode == ChatFocus::Compose {
+            self.chat.compose_paste(&text);
+            return vec![];
+        }
+
+        if self.tab != Tab::StreamInfo && self.tab != Tab::Combined {
+            return vec![];
+        }
+
+        match self.screen {
+            Screen::Form => {
+                let field = self.field();
+                if !field.is_text_input() {
+                    return vec![];
+                }
+                if let Some(input) = self.inputs.get_mut(&field) {
+                    input.insert_str(&text);
+                }
+                self.on_text_changed(field)
+            }
+            // The credential boxes, which is where a paste is most obviously
+            // wanted: a client secret is forty random characters nobody types.
+            Screen::Setup => {
+                if let Some(field) = SetupField::ORDER.get(self.setup_cursor).copied() {
+                    if let Some(input) = self.setup_inputs.get_mut(&field) {
+                        input.insert_str(&text);
+                    }
+                }
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
+
     /// Take the diagnostics again, if that pane is what is on screen.
     ///
     /// The snapshot was taken when the section was opened and on `r`, and
@@ -6454,6 +6514,52 @@ mod tests {
         );
         // And from below, unity is still the ceiling.
         assert_eq!((0.98f64 + 0.05).clamp(0.0, 0.98f64.max(1.0)), 1.0);
+    }
+
+    /// There was no paste anywhere: a 5000-character YouTube description had
+    /// to be retyped, and a client secret is forty random characters nobody
+    /// types by hand.
+    #[test]
+    fn pasting_reaches_the_focused_form_field() {
+        let mut app = app_on_form();
+        app.field_cursor = Field::ORDER
+            .iter()
+            .position(|f| *f == Field::Title)
+            .unwrap();
+
+        app.handle_paste("A title from the clipboard");
+
+        assert_eq!(
+            app.inputs.get(&Field::Title).unwrap().value(),
+            "A title from the clipboard"
+        );
+    }
+
+    /// Every field and the composer are single lines, so a pasted paragraph
+    /// arrives as one line rather than as a half-finished message per break.
+    #[test]
+    fn a_pasted_newline_becomes_a_space() {
+        let mut app = app_on_form();
+        app.field_cursor = Field::ORDER
+            .iter()
+            .position(|f| *f == Field::Title)
+            .unwrap();
+
+        app.handle_paste("first line\nsecond line");
+
+        assert_eq!(
+            app.inputs.get(&Field::Title).unwrap().value(),
+            "first line second line"
+        );
+    }
+
+    /// A paste into a screen that is not expecting text does nothing, rather
+    /// than being scattered somewhere it was not aimed.
+    #[test]
+    fn pasting_where_there_is_no_text_box_does_nothing() {
+        let mut app = app();
+        app.screen = Screen::Dashboard;
+        assert!(app.handle_paste("nowhere to go").is_empty());
     }
 
     /// The Config tab's keys are named actions now, so `[keys.config]` can

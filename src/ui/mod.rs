@@ -16,7 +16,8 @@ pub mod worker;
 
 use anyhow::{Context, Result};
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event as TermEvent, EventStream, KeyEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event as TermEvent, EventStream, KeyEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -57,6 +58,16 @@ impl TerminalGuard {
         enable_raw_mode().context("switching the terminal into raw mode")?;
         let mut stdout = std::io::stdout();
         execute!(stdout, EnterAlternateScreen).context("opening the alternate screen")?;
+        // Bracketed paste: the terminal wraps pasted text in markers so it
+        // arrives as one event instead of as a burst of keystrokes. Without
+        // it there was no paste at all — a 5000-character YouTube description
+        // had to be retyped — and a paste that did arrive would be read as
+        // somebody typing very fast, with every `q` quitting and every `j`
+        // scrolling.
+        //
+        // Best-effort: a terminal that does not support it simply never sends
+        // the events, which is exactly the behaviour there was before.
+        let _ = execute!(stdout, EnableBracketedPaste);
         if mouse {
             // Cell-motion reporting: the terminal sends clicks and wheel
             // events. It also stops the terminal handling drag-selection
@@ -90,6 +101,7 @@ impl Drop for TerminalGuard {
             let _ = stdout.write_all(crate::theme::RESET_BACKGROUND_SEQUENCE.as_bytes());
             let _ = stdout.flush();
         }
+        let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
         let _ = self.terminal.show_cursor();
     }
@@ -349,6 +361,10 @@ pub async fn run(config: Config) -> Result<()> {
                             let commands = app.handle_key(key);
                             dispatch(&mut app, &command_tx, commands);
                         }
+                    }
+                    Ok(TermEvent::Paste(text)) => {
+                        let commands = app.handle_paste(&text);
+                        dispatch(&mut app, &command_tx, commands);
                     }
                     Ok(TermEvent::Mouse(event)) => {
                         let area = guard.terminal.size().map(|size| ratatui::layout::Rect {

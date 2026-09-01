@@ -369,6 +369,7 @@ The message box is a full text field, with the same keys as the metadata form.
 | <kbd>Ctrl</kbd>+<kbd>U</kbd> | Throw the whole draft away |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Walk back through what you have already sent in this chat |
 | <kbd>Tab</kbd> | Complete a half-typed <kbd>@</kbd>mention from the roster |
+| Paste | Your terminal's paste (usually <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>) inserts at the caret |
 | <kbd>Ctrl</kbd>+<kbd>E</kbd> | Emoji picker |
 
 A character means a grapheme cluster, not a byte or a code point: one

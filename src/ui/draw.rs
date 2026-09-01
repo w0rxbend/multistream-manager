@@ -885,9 +885,15 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App) {
     let text_width = areas[0].width.saturating_sub(32).max(10) as usize;
 
     let mut lines = Vec::new();
+    // Which drawn row the focused field ended up on. Fields are skipped when
+    // they do not apply, so this is not the cursor index.
+    let mut focused_row = 0usize;
 
     for (index, field) in Field::ORDER.iter().enumerate() {
         let focused = index == app.field_cursor;
+        if focused {
+            focused_row = lines.len();
+        }
         let label_style = if focused {
             Style::new().fg(sk.accent).add_modifier(Modifier::BOLD)
         } else {
@@ -979,13 +985,40 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(spans));
     }
 
+    // Scroll so the focused field is always on screen. With both platforms
+    // selected there are twelve fields, and on a terminal near 24 rows the
+    // last of them fell off the bottom — while the cursor still walked onto
+    // them, so typing went into a field with no caret anywhere in sight.
+    let inner_height = areas[0].height.saturating_sub(2) as usize;
+    let offset = if inner_height == 0 || lines.len() <= inner_height {
+        0
+    } else {
+        // Keep the focused row inside the window, biased so there is context
+        // above it once it has scrolled away from the first field.
+        focused_row
+            .saturating_sub(inner_height.saturating_sub(1))
+            .min(lines.len() - inner_height)
+    };
+
+    let hidden_above = offset;
+    let hidden_below = lines.len().saturating_sub(offset + inner_height);
+    let title = match (hidden_above, hidden_below) {
+        (0, 0) => " Stream settings ".to_string(),
+        (0, below) => format!(" Stream settings — {below} more ▼ "),
+        (above, 0) => format!(" Stream settings — ▲ {above} more "),
+        (above, below) => format!(" Stream settings — ▲ {above} · {below} ▼ "),
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(sk.border))
-        .title(" Stream settings ");
+        .title(title);
 
-    frame.render_widget(Paragraph::new(lines).block(block), areas[0]);
+    frame.render_widget(
+        Paragraph::new(lines).block(block).scroll((offset as u16, 0)),
+        areas[0],
+    );
 
     // The help text for whichever field is focused.
     let help = Paragraph::new(vec![
