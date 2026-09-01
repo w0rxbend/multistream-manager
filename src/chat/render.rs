@@ -508,6 +508,21 @@ impl ChipTone {
 }
 
 /// Maps a YouTube purchase tier (1–11; 0 = unknown) onto the six-step ladder.
+/// A cheer's size as a chip tier, so a hundred bits and ten thousand do not
+/// look the same.
+///
+/// The thresholds follow Twitch's own cheermote tiers, which is the ladder
+/// viewers already read.
+pub fn bits_tier(bits: u64) -> u8 {
+    match bits {
+        0..=99 => 1,
+        100..=999 => 3,
+        1_000..=4_999 => 5,
+        5_000..=9_999 => 7,
+        _ => 9,
+    }
+}
+
 pub fn tier_color(tier: u8) -> ChipTone {
     match tier {
         0 | 1 => ChipTone::Accent,
@@ -715,7 +730,74 @@ pub fn render_message(msg: &ChatMessage, width: u16, opts: &RenderOpts) -> Vec<L
     });
 
     let content = content_pieces(msg, opts);
-    wrap(prefix, content, width)
+    let mut rows = wrap(prefix, content, width);
+    // Above the message, so it reads the way a threaded reply does. Dropped
+    // in the compact layout, which trades every decoration for message text.
+    if !compact {
+        if let Some(row) = reply_row(msg, width, 0) {
+            rows.insert(0, row);
+        }
+    }
+    rows
+}
+
+/// Cut `text` to at most `width` terminal cells, ending in `…` when it had to
+/// be cut.
+///
+/// By grapheme cluster and by display width, not by byte or `char`: a cut
+/// through an emoji or a wide CJK character is what turns a truncation into a
+/// broken line.
+fn truncate_to_width(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".to_string();
+    }
+
+    let mut out = String::new();
+    let mut used = 0usize;
+    for cluster in text.graphemes(true) {
+        let cell = cluster.width();
+        if used + cell > width - 1 {
+            break;
+        }
+        out.push_str(cluster);
+        used += cell;
+    }
+    out.push('…');
+    out
+}
+
+/// The muted "replying to" row above a threaded message, if it is one.
+///
+/// Twitch's `reply-parent-*` tags were parsed into `ReplyContext` and stored
+/// on every threaded message, and nothing ever read them — so a reply looked
+/// exactly like a new remark, and a conversation in a busy chat was
+/// impossible to follow. `msg.text` does not repeat the parent, so without
+/// this the thread is genuinely invisible.
+///
+/// One line, truncated: the parent is context, not content, and a long parent
+/// pushing the actual message off the screen would invert the point.
+fn reply_row(msg: &ChatMessage, width: usize, indent: usize) -> Option<Line<'static>> {
+    let PlatformMeta::Twitch(meta) = msg.meta.as_ref()? else {
+        return None;
+    };
+    let reply = meta.reply.as_ref()?;
+    if reply.parent_author.trim().is_empty() {
+        return None;
+    }
+
+    let mut text = format!("{}↳ {}", " ".repeat(indent), reply.parent_author.trim());
+    let body = reply.parent_text.trim();
+    if !body.is_empty() {
+        text.push_str(": ");
+        text.push_str(body);
+    }
+    Some(Line::from(Span::styled(
+        truncate_to_width(&text, width),
+        Style::new().fg(muted_color()).add_modifier(Modifier::ITALIC),
+    )))
 }
 
 /// The author-name pieces shared by every layout: the bold identity-colored
@@ -771,6 +853,13 @@ fn render_grouped(msg: &ChatMessage, width: usize, opts: &RenderOpts) -> Vec<Lin
     };
 
     let mut rows: Vec<Line<'static>> = Vec::new();
+
+    // Above the header, indented with the body: a reply belongs to the
+    // message that follows it, and a run of grouped messages under one name
+    // may contain several.
+    if let Some(row) = reply_row(msg, width, indent) {
+        rows.push(row);
+    }
 
     if !opts.continues_group {
         let mut header = name_pieces(msg, opts);
@@ -907,6 +996,47 @@ fn content_pieces(msg: &ChatMessage, opts: &RenderOpts) -> Vec<Piece> {
                 style: Style::new()
                     .fg(canvas_color())
                     .bg(color)
+                    .add_modifier(Modifier::BOLD),
+                atomic: true,
+            });
+            pieces.push(Piece {
+                text: " ".to_string(),
+                style: Style::new().fg(text_color()),
+                atomic: true,
+            });
+        }
+    }
+
+    // The Twitch equivalent. A cheer arrived as completely ordinary text —
+    // the only signal in the pane was a `◈` badge, which comes from a
+    // *lifetime* bits badge rather than from this message — so somebody who
+    // had just spent a thousand bits looked exactly like somebody saying
+    // hello, while a YouTube payer was impossible to miss.
+    if let Some(PlatformMeta::Twitch(meta)) = &msg.meta {
+        if meta.bits > 0 {
+            pieces.push(Piece {
+                text: format!(" ◈ {} bits ", meta.bits),
+                style: Style::new()
+                    .fg(canvas_color())
+                    .bg(tier_color(bits_tier(meta.bits)).color())
+                    .add_modifier(Modifier::BOLD),
+                atomic: true,
+            });
+            pieces.push(Piece {
+                text: " ".to_string(),
+                style: Style::new().fg(text_color()),
+                atomic: true,
+            });
+        }
+        if !meta.system_event.is_empty() {
+            // Subs, resubs, raids and announcements. The event word itself is
+            // Twitch's (`sub`, `raid`, `announcement`), which is what the
+            // rest of the interface calls them too.
+            pieces.push(Piece {
+                text: format!(" ★ {} ", meta.system_event),
+                style: Style::new()
+                    .fg(canvas_color())
+                    .bg(accent_color())
                     .add_modifier(Modifier::BOLD),
                 atomic: true,
             });
@@ -1201,6 +1331,107 @@ mod tests {
 
     fn line_width(line: &Line<'_>) -> usize {
         line.spans.iter().map(|s| s.content.as_ref().width()).sum()
+    }
+
+    // -- Twitch decoration --------------------------------------------------
+
+    /// Reply threading was parsed from the `reply-parent-*` tags into
+    /// `ReplyContext` on every threaded message, and nothing ever read it —
+    /// so a reply looked exactly like a new remark. `msg.text` does not
+    /// repeat the parent, so the thread was genuinely invisible.
+    #[test]
+    fn a_reply_shows_what_it_is_replying_to() {
+        let mut msg = message("it is on the wiki");
+        msg.meta = Some(PlatformMeta::Twitch(TwitchMeta {
+            bits: 0,
+            first_message: false,
+            system_event: String::new(),
+            reply: Some(crate::chat::ReplyContext {
+                parent_id: "m0".into(),
+                parent_author: "Asker".into(),
+                parent_text: "where do I find the config file?".into(),
+            }),
+        }));
+
+        let text = joined(&render_message(&msg, 80, &RenderOpts::default()));
+        assert!(text.contains("↳ Asker"), "{text}");
+        assert!(text.contains("where do I find"), "{text}");
+        // The message itself still reads normally underneath.
+        assert!(text.contains("it is on the wiki"), "{text}");
+    }
+
+    /// The context row is context, not content: a very long parent must not
+    /// push the actual message off the screen.
+    #[test]
+    fn a_long_reply_parent_is_truncated_to_the_width() {
+        let mut msg = message("yes");
+        msg.meta = Some(PlatformMeta::Twitch(TwitchMeta {
+            bits: 0,
+            first_message: false,
+            system_event: String::new(),
+            reply: Some(crate::chat::ReplyContext {
+                parent_id: "m0".into(),
+                parent_author: "Asker".into(),
+                parent_text: "a".repeat(500),
+            }),
+        }));
+
+        for line in render_message(&msg, 40, &RenderOpts::default()) {
+            assert!(line_width(&line) <= 40, "{:?} is too wide", joined(&[line]));
+        }
+    }
+
+    /// A cheer used to arrive as completely ordinary text. The only signal in
+    /// the pane was a `◈` badge, which comes from a *lifetime* bits badge
+    /// rather than from this message — so somebody who had just spent a
+    /// thousand bits looked exactly like somebody saying hello, while a
+    /// YouTube payer was impossible to miss.
+    #[test]
+    fn a_twitch_cheer_gets_a_chip_like_a_super_chat_does() {
+        let mut msg = message("Cheer1000 great stream");
+        msg.meta = Some(PlatformMeta::Twitch(TwitchMeta {
+            bits: 1000,
+            first_message: false,
+            system_event: String::new(),
+            reply: None,
+        }));
+
+        let lines = render_message(&msg, 80, &RenderOpts::default());
+        let text = joined(&lines);
+        assert!(text.contains("1000 bits"), "{text}");
+
+        // A chip is coloured ground, not tinted text — that is what makes it
+        // impossible to scroll past.
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content.contains("bits") && span.style.bg.is_some()),
+            "the bits chip has to be drawn as a solid block"
+        );
+    }
+
+    /// …and bigger cheers read as bigger, rather than every cheer looking the
+    /// same.
+    #[test]
+    fn a_bigger_cheer_gets_a_higher_tier() {
+        assert!(bits_tier(50) < bits_tier(500));
+        assert!(bits_tier(500) < bits_tier(2_000));
+        assert!(bits_tier(2_000) < bits_tier(50_000));
+    }
+
+    #[test]
+    fn a_subscription_event_gets_its_own_chip() {
+        let mut msg = message("thanks for the year!");
+        msg.meta = Some(PlatformMeta::Twitch(TwitchMeta {
+            bits: 0,
+            first_message: false,
+            system_event: "resub".into(),
+            reply: None,
+        }));
+
+        let text = joined(&render_message(&msg, 80, &RenderOpts::default()));
+        assert!(text.contains("★ resub"), "{text}");
     }
 
     // -- identity_color -----------------------------------------------------
