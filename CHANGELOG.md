@@ -46,6 +46,22 @@ would break an existing setup is listed under **Changed** with what to do.
   for polls and predictions.
 - **Fine volume control on the OBS tab** (<kbd>]</kbd> / <kbd>[</kbd>, 1%),
   for settling on a level rather than finding one.
+- **Pasting**, in the metadata form, the chat composer and the credential
+  boxes. There was none at all before — a 5000-character description had to be
+  retyped, and a client secret is forty random characters nobody types by hand.
+- **Pinning a YouTube stream id from the interface.** Housekeeping's listing
+  wrote the ids to the log and stopped there; each is now a row you press
+  <kbd>Enter</kbd> on. This was the last thing in the program that could only
+  be done in a text editor.
+- **Replies, cheers and subscription events are drawn.** Twitch reply
+  threading was parsed into the message and never rendered, so a reply read as
+  an unprompted remark; cheers arrived as ordinary text while YouTube Super
+  Chats got a solid chip. Both now show. A message that names you gets an
+  accent gutter — the app already worked that out for the mentions filter and
+  used it only to hide *other* messages.
+- **`[keys.config]`**: the Config tab's keys are named, rebindable actions
+  instead of hardcoded matches, so they appear in which-key, `<Leader>?` and
+  the palette like every other tab's.
 
 ### Fixed
 
@@ -85,6 +101,38 @@ would break an existing setup is listed under **Changed** with what to do.
 - **Diagnostics went stale** — it never retook its snapshot after a login or
   an OBS connection — reported credential *presence* when the documented
   footgun is a question of *source*, and could not be scrolled.
+- **Cleanup deleted a list you had never seen.** The confirming press
+  re-fetched the abandoned broadcasts and deleted *those*, so one created
+  between the two presses — the broadcast you had just set up for tonight —
+  went with them. It now deletes only what it showed you, the armed
+  confirmation no longer survives navigating away, and the row says which of
+  the two things the next press will do.
+- **The command palette could run the wrong action.** It replayed a chord
+  found in any context, and a bare `j` is `chat.scroll_down`, `obs.down` *and*
+  `config.next_section` — so choosing "Scroll forward" from the OBS tab moved
+  the scene cursor.
+- **Volume up could turn a source down**, on any source OBS holds above unity.
+- **`q` did not quit on the Config tab**, though every footer there said it
+  did; and adding a panel to a one-panel layout silently did nothing while
+  reporting success.
+- **The OBS failure reason was never readable** — it was sent and overwritten
+  in the same instant, so the pane only ever said "reconnecting". A wrong
+  password now also stops retrying after three refusals instead of looping
+  forever.
+- **The login screen showed nothing while logging in**, including the fallback
+  URL that is the only way through on a headless machine.
+- **Logging out asked nothing and reported success before the disk write.** It
+  now confirms, and reports what actually happened.
+- **`<Leader>?` clipped most of the bindings it promised**, and closed on the
+  key you pressed to see more. It scrolls.
+- **The message history cut off long errors** — the thing it exists to
+  preserve. Entries wrap.
+- **The metadata form could not scroll**, so on a terminal near 24 rows the
+  last fields were unreachable while the cursor still walked onto them.
+- **Keys could not round-trip**: `<Insert>`, `<S-F5>` and `<lt>` were written
+  back in forms the parser rejects.
+- **Broadcast listing and deletion spent YouTube quota nothing counted** — 50
+  units per delete. The listing now says what confirming will cost.
 
 ### Changed
 
