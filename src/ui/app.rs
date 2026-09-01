@@ -33,6 +33,18 @@ fn saved_logins() -> BTreeMap<Platform, bool> {
         .collect()
 }
 
+/// The files the Config → Files section lists, and how to find each.
+///
+/// A table so the drawing and the "open this one" key cannot disagree about
+/// which row is which — the same hazard the notification switches had.
+pub type FileRow = (&'static str, fn() -> anyhow::Result<std::path::PathBuf>);
+
+pub const FILE_ROWS: [FileRow; 3] = [
+    ("Config", crate::paths::config_file),
+    ("Logins", crate::paths::token_file),
+    ("Log", crate::paths::log_file),
+];
+
 /// Whether a connect failure means the saved login is no longer usable.
 ///
 /// Deliberately narrow. A timeout or a 500 is the network having a bad
@@ -1314,6 +1326,7 @@ impl App {
                     | Section::Appearance
                     | Section::Notifications
                     | Section::Chat
+                    | Section::Paths
             ),
             Action::ConfigAddAccount | Action::ConfigForgetAccount => {
                 section == Section::Accounts
@@ -1402,6 +1415,27 @@ impl App {
             Section::Appearance => self.change_appearance_setting(),
             Section::Notifications => self.change_notification_setting(),
             Section::Chat => self.change_chat_setting(),
+            // Open the selected file. Four sections tell the user to edit
+            // config.toml by hand and none of them offered to open it.
+            Section::Paths => match FILE_ROWS.get(config.cursor) {
+                Some((label, which)) => match which() {
+                    Ok(path) => {
+                        self.notify(
+                            super::toast::Level::Info,
+                            format!("Opening the {label} file…"),
+                        );
+                        vec![Command::OpenUrl(path.display().to_string())]
+                    }
+                    Err(err) => {
+                        self.notify(
+                            super::toast::Level::Warning,
+                            format!("That path is unavailable: {err:#}"),
+                        );
+                        vec![]
+                    }
+                },
+                None => vec![],
+            },
             _ => vec![],
         }
     }
@@ -1504,6 +1538,26 @@ impl App {
                 self.config_tab = None;
                 return self.go_to_tab(Tab::StreamInfo);
             }
+            // Typing filters the Keys listing. Around 110 bindings walked one
+            // `j` at a time was the alternative, and the letters were being
+            // dropped on the floor anyway.
+            KeyCode::Backspace if config.section == Section::Keys => {
+                config.key_filter.pop();
+                config.cursor = 0;
+                self.config_tab = Some(config);
+                return vec![];
+            }
+            KeyCode::Char(c)
+                if config.section == Section::Keys
+                    && config.focus == Focus::Contents
+                    && is_typed_text(&key) =>
+            {
+                config.key_filter.push(c);
+                config.cursor = 0;
+                self.config_tab = Some(config);
+                return vec![];
+            }
+
             _ if config.section == Section::Layout => {
                 // Undo, before anything is changed. `p` replaces the whole
                 // arrangement in one keypress, so cycling past the preset you

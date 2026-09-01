@@ -96,6 +96,12 @@ pub struct Toast {
     /// session because the clock moved would be a silly way to lose a screen.
     born: Instant,
     lifetime: Duration,
+    /// How many times in a row this same message was raised.
+    ///
+    /// Zero for the usual case. A flapping connection produces the same retry
+    /// line over and over; collapsing them keeps the one error worth reading
+    /// from being buried, and from evicting the rest of a bounded history.
+    pub repeats: u32,
 }
 
 impl Toast {
@@ -149,10 +155,23 @@ impl Toasts {
             at: chrono::Local::now(),
             born: Instant::now(),
             lifetime: level.lifetime(base_lifetime),
+            repeats: 0,
         };
-        self.history.push_back(toast.clone());
-        while self.history.len() > HISTORY_LIMIT {
-            self.history.pop_front();
+        // Collapse an immediate repeat rather than storing it again. A
+        // flapping connection produces eleven identical retry lines, which
+        // bury the one error somebody opened the history to find — and can
+        // evict the rest of it, since the history is bounded.
+        match self.history.back_mut() {
+            Some(last) if last.text == toast.text && last.level == toast.level => {
+                last.repeats += 1;
+                last.at = toast.at;
+            }
+            _ => {
+                self.history.push_back(toast.clone());
+                while self.history.len() > HISTORY_LIMIT {
+                    self.history.pop_front();
+                }
+            }
         }
         self.active.push_back(toast);
         while self.active.len() > MAX_VISIBLE {
@@ -387,6 +406,15 @@ pub fn draw_history(frame: &mut Frame, area: Rect, toasts: &Toasts) {
                             Style::new().fg(toast.level.color()),
                         ),
                         Span::styled(chunk, Style::new().fg(sk.foreground)),
+                        // How many times it repeated, on the first line only.
+                        Span::styled(
+                            if toast.repeats > 0 {
+                                format!("  (×{})", toast.repeats + 1)
+                            } else {
+                                String::new()
+                            },
+                            Style::new().fg(sk.muted),
+                        ),
                     ])
                 } else {
                     // Indented past the timestamp and glyph columns, so a
@@ -436,6 +464,33 @@ fn blend(base: Color, toward: Color, amount: f64) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flapping connection produces the same retry line over and over.
+    /// Eleven identical entries bury the one error somebody opened the
+    /// history to find — and can evict the rest of it, since it is bounded.
+    #[test]
+    fn an_immediate_repeat_is_collapsed_and_counted() {
+        let mut toasts = Toasts::default();
+        let life = Duration::from_secs(5);
+
+        toasts.push(Level::Error, "OBS refused the connection", life);
+        toasts.push(Level::Error, "OBS refused the connection", life);
+        toasts.push(Level::Error, "OBS refused the connection", life);
+
+        assert_eq!(toasts.history().len(), 1, "three identical lines are one");
+        assert_eq!(toasts.history()[0].repeats, 2, "and it says how many");
+
+        // A different message is its own entry, and the repeat count does not
+        // carry over.
+        toasts.push(Level::Error, "something else went wrong", life);
+        assert_eq!(toasts.history().len(), 2);
+        assert_eq!(toasts.history()[1].repeats, 0);
+
+        // …and the same message after that is a new run rather than a
+        // continuation of the old one.
+        toasts.push(Level::Error, "OBS refused the connection", life);
+        assert_eq!(toasts.history().len(), 3);
+    }
 
     /// The history exists so a long error can be read after it has flashed
     /// past; it rendered each entry as one unwrapped line, so anything wider

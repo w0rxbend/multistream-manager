@@ -74,9 +74,9 @@ impl Section {
                 " j/k move   tab pane   r re-run the checks   esc back   q quit"
             }
             // Read-only displays: nothing to say beyond how to get around.
-            Section::Keys | Section::Obs | Section::Paths => {
-                " j/k move   tab pane   esc back   q quit"
-            }
+            Section::Keys => " j/k move   tab pane   type to filter   esc back   q quit",
+            Section::Paths => " j/k move   tab pane   enter open   esc back   q quit",
+            Section::Obs => " j/k move   tab pane   esc back   q quit",
         }
     }
 
@@ -169,6 +169,12 @@ pub struct ConfigTab {
     /// was simply cut off. Scrolling is the difference between a self-check
     /// and a self-check you can finish reading.
     pub diagnostics_scroll: u16,
+    /// A typed filter over the Keys listing.
+    ///
+    /// Around 110 bindings walked one `j` at a time, with no filter, no
+    /// paging and no `g`/`G`. Finding the one you wanted meant holding a key
+    /// down and watching.
+    pub key_filter: String,
     /// Previous states of the draft, for `u`.
     ///
     /// The editor had no undo, and `p` replaces the whole arrangement in one
@@ -206,6 +212,7 @@ impl ConfigTab {
             preset_index: 0,
             diagnostics_scroll: 0,
             history: Vec::new(),
+            key_filter: String::new(),
         }
     }
 
@@ -220,6 +227,34 @@ impl ConfigTab {
         };
     }
 
+    /// The bindings matching the Keys filter.
+    ///
+    /// Matched on the written chord, the context and the description *and*
+    /// the action name, so both "what key does this" and "what is
+    /// obs.mute_all on" are answerable — and the action name is what you
+    /// write in config.toml, which is the other reason to look at this
+    /// screen.
+    pub fn matching_bindings(&self, app: &App) -> Vec<crate::keys::Binding> {
+        let needle = self.key_filter.trim().to_lowercase();
+        app.keymap
+            .all()
+            .into_iter()
+            .filter(|binding| {
+                needle.is_empty() || {
+                    let haystack = format!(
+                        "{} {} {} {}",
+                        crate::keys::write_chord(&binding.chord, app.keymap.leader),
+                        binding.context.name(),
+                        binding.action.describe(),
+                        binding.action.name()
+                    )
+                    .to_lowercase();
+                    haystack.contains(&needle)
+                }
+            })
+            .collect()
+    }
+
     /// How many rows the chosen section offers, for clamping the cursor.
     pub fn rows(&self, app: &App) -> usize {
         match self.section {
@@ -227,7 +262,7 @@ impl ConfigTab {
             Section::Appearance => APPEARANCE_ROWS,
             Section::Notifications => NOTIFICATION_ROWS,
             Section::Chat => CHAT_ROWS,
-            Section::Keys => app.keymap.all().len(),
+            Section::Keys => self.matching_bindings(app).len(),
             Section::Obs => 0,
             // Every account the store holds, not one row per platform: the
             // extra chat accounts were invisible and unremovable.
@@ -236,7 +271,8 @@ impl ConfigTab {
             // found, so one can be pinned without a text editor.
             Section::Maintenance => MAINTENANCE_ROWS + app.youtube_streams.len(),
             Section::Diagnostics => 0,
-            Section::Paths => 0,
+            // Three paths, each of which can now be opened.
+            Section::Paths => 3,
         }
     }
 }
@@ -818,7 +854,7 @@ fn on_off(value: bool) -> String {
 /// rather than in a document.
 fn draw_keys(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     let sk = theme::skin();
-    let bindings = app.keymap.all();
+    let bindings = config.matching_bindings(app);
     let height = area.height.saturating_sub(2) as usize;
     let first = config
         .cursor
@@ -881,7 +917,18 @@ fn draw_keys(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     }
 
     lines.push(Line::from(Span::styled(
-        "Change these under [keys] in config.toml. <Leader>? shows them as a map.",
+        if config.key_filter.is_empty() {
+            "type to filter · change these under [keys] in config.toml · <Leader>? shows them \
+             as a map"
+                .to_string()
+        } else {
+            format!(
+                "filter: {}   {} of {} shown   backspace clears",
+                config.key_filter,
+                bindings.len(),
+                app.keymap.all().len()
+            )
+        },
         Style::new().fg(sk.muted),
     )));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
@@ -1157,10 +1204,14 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_paths(frame: &mut Frame, area: Rect, app: &App) {
     let sk = theme::skin();
+    let config = match &app.config_tab {
+        Some(config) => config,
+        None => return,
+    };
     // A path carries your username, and the Files section is exactly the sort
     // of screen somebody tabs to mid-stream to check something.
     let hide = app.streamer_mode();
-    let path = |result: anyhow::Result<std::path::PathBuf>| match result {
+    let shown = |result: &anyhow::Result<std::path::PathBuf>| match result {
         Ok(path) if hide => {
             let name = path
                 .file_name()
@@ -1171,16 +1222,39 @@ fn draw_paths(frame: &mut Frame, area: Rect, app: &App) {
         Ok(path) => path.display().to_string(),
         Err(err) => format!("unavailable: {err}"),
     };
-    let lines = vec![
-        setting_line("Config", path(crate::paths::config_file()), sk),
-        setting_line("Logins", path(crate::paths::token_file()), sk),
-        setting_line("Log", path(crate::paths::log_file()), sk),
-        Line::from(""),
-        Line::from(Span::styled(
-            "The log is where the detail goes: this window belongs to the interface.",
-            Style::new().fg(sk.muted),
-        )),
-    ];
+
+    let mut lines: Vec<Line> = crate::ui::app::FILE_ROWS
+        .iter()
+        .enumerate()
+        .map(|(index, (label, which))| {
+            let selected = index == config.cursor && config.focus == Focus::Contents;
+            let mut line = Line::from(vec![
+                Span::styled(
+                    if selected { "▸ " } else { "  " },
+                    Style::new().fg(sk.accent),
+                ),
+                Span::styled(format!("{label:<10}"), Style::new().fg(sk.foreground)),
+                Span::styled(shown(&which()), Style::new().fg(sk.muted)),
+            ]);
+            if selected {
+                line = line.style(Style::new().bg(sk.selection));
+            }
+            line
+        })
+        .collect();
+
+    lines.push(Line::from(""));
+    // These were three lines of text that could be neither opened nor copied,
+    // while four other sections told the user to edit config.toml by hand and
+    // none of them offered to open it.
+    lines.push(Line::from(Span::styled(
+        "enter opens the selected file in whatever your system uses for it",
+        Style::new().fg(sk.muted),
+    )));
+    lines.push(Line::from(Span::styled(
+        "The log is where the detail goes: this window belongs to the interface.",
+        Style::new().fg(sk.muted),
+    )));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
