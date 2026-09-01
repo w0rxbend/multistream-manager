@@ -343,10 +343,17 @@ pub async fn run(
             }
 
             Command::ReloadConfig(fresh) => {
+                // Only drop the engine when something it was built from
+                // actually changed. This command is sent on every save — which
+                // includes picking a theme, moving a layout panel and toggling
+                // a notification — and discarding the engine there meant the
+                // next statistics poll had to rebuild it and redo the token
+                // work, so the dashboard would blank out and refill because
+                // somebody changed a colour.
+                if config.credentials_fingerprint() != fresh.credentials_fingerprint() {
+                    engine = None;
+                }
                 config = *fresh;
-                // Any engine was built from the previous credentials, so it can
-                // no longer be trusted to belong to this configuration.
-                engine = None;
             }
 
             Command::Login(platforms) => {
@@ -729,12 +736,12 @@ mod tests {
         handle.await.unwrap();
     }
 
-    /// The worker keeps its own copy of the config, and adopting a new one has
-    /// to drop the engine with it: an engine built from the old credentials
-    /// would keep using them, which looks exactly like the setup screen having
-    /// silently failed to save.
+    /// The worker keeps its own copy of the config. When the *credentials*
+    /// change, adopting the new config has to drop the engine with it: an
+    /// engine built from the old credentials would keep using them, which
+    /// looks exactly like the setup screen having silently failed to save.
     #[tokio::test]
-    async fn reloading_the_config_forgets_the_engine_built_from_the_old_one() {
+    async fn reloading_a_config_with_new_credentials_forgets_the_old_engine() {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
@@ -754,8 +761,10 @@ mod tests {
             }
         }
 
+        let mut changed = Config::default();
+        changed.twitch.client_id = "a-new-client-id".into();
         command_tx
-            .send(Command::ReloadConfig(Box::default()))
+            .send(Command::ReloadConfig(Box::new(changed)))
             .await
             .unwrap();
         command_tx.send(Command::EndLive).await.unwrap();
@@ -766,6 +775,50 @@ mod tests {
                 assert!(
                     message.contains("Not connected"),
                     "the old engine must have been dropped: {message}"
+                );
+            }
+            other => panic!("expected a log line, got {other:?}"),
+        }
+
+        drop(command_tx);
+        handle.await.unwrap();
+    }
+
+    /// The counterpart. This command is sent on *every* save, which includes
+    /// picking a theme, moving a layout panel and toggling a notification.
+    /// Dropping the engine there cost a full round of token work and blanked
+    /// the dashboard because somebody changed a colour.
+    #[tokio::test]
+    async fn reloading_a_config_that_changed_only_appearance_keeps_the_engine() {
+        let (command_tx, command_rx) = mpsc::channel(4);
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+
+        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+
+        command_tx
+            .send(Command::Connect(vec![Platform::Twitch]))
+            .await
+            .unwrap();
+        loop {
+            match event_rx.recv().await.expect("the connect answers") {
+                Event::Connected(_) => break,
+                _ => continue,
+            }
+        }
+
+        let mut cosmetic = Config::default();
+        cosmetic.appearance.theme = "some-other-theme".into();
+        command_tx
+            .send(Command::ReloadConfig(Box::new(cosmetic)))
+            .await
+            .unwrap();
+        command_tx.send(Command::EndLive).await.unwrap();
+
+        match event_rx.recv().await.expect("an answer arrives") {
+            Event::Log { message, .. } => {
+                assert!(
+                    !message.contains("Not connected"),
+                    "a cosmetic change must not throw the engine away: {message}"
                 );
             }
             other => panic!("expected a log line, got {other:?}"),

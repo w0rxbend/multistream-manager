@@ -1068,6 +1068,31 @@ impl Config {
         Ok(())
     }
 
+    /// Everything [`crate::engine::Engine::build`] reads out of the
+    /// configuration, in a form two configurations can be compared by.
+    ///
+    /// The engine holds live access tokens and cached platform identities, and
+    /// rebuilding it means a fresh round of token work. It only ever has to be
+    /// rebuilt when something it was actually built *from* changed — the API
+    /// credentials, and the two YouTube settings that decide which stream key
+    /// a broadcast is bound to. Changing a theme or a keybinding cannot
+    /// invalidate it.
+    ///
+    /// Resolved values are compared rather than raw fields, so moving a
+    /// secret from the config file into its environment variable — which
+    /// leaves the credential itself identical — is correctly seen as no
+    /// change at all.
+    pub fn credentials_fingerprint(&self) -> Vec<String> {
+        vec![
+            self.twitch.client_id(),
+            self.twitch.client_secret(),
+            self.youtube.client_id(),
+            self.youtube.client_secret(),
+            self.youtube.reuse_stream.to_string(),
+            self.youtube.stream_id.clone(),
+        ]
+    }
+
     /// Check that the credentials needed for the given platforms are present,
     /// and explain precisely how to obtain them if they are not.
     pub fn check_credentials(&self, platforms: &[Platform]) -> Result<()> {
@@ -1619,5 +1644,29 @@ mod tests {
         let message = format!("{error}");
         assert!(message.contains("MSM_TWITCH_CLIENT_ID"), "got {message}");
         assert!(message.contains("setup screen"), "got {message}");
+    }
+
+    /// The engine is expensive to rebuild and holds live tokens, so a save
+    /// that changed only presentation must not invalidate it.
+    #[test]
+    fn the_credentials_fingerprint_ignores_everything_the_engine_never_reads() {
+        let mut config = Config::default();
+        config.twitch.client_id = "abc".into();
+        let before = config.credentials_fingerprint();
+
+        config.appearance.theme = "some-other-theme".into();
+        config.general.poll_interval_secs = 42;
+        assert_eq!(
+            before,
+            config.credentials_fingerprint(),
+            "a theme or poll-interval change must not force a rebuild"
+        );
+
+        config.twitch.client_id = "def".into();
+        assert_ne!(
+            before,
+            config.credentials_fingerprint(),
+            "a changed client id must force a rebuild"
+        );
     }
 }
