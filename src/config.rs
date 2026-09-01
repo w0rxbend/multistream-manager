@@ -91,8 +91,13 @@ pub struct AppearanceConfig {
     /// status bar.
     pub telemetry: bool,
 
-    /// Show pop-up notifications for things that happen while you are looking
-    /// elsewhere.
+    /// Show routine pop-up notifications — progress, confirmations, "copied
+    /// to the clipboard".
+    ///
+    /// Problems always produce a pop-up regardless of this setting. The
+    /// activity log is drawn only at the bottom of the Stream Info tab, so
+    /// an error raised while you are reading chat would otherwise be
+    /// completely silent.
     pub toasts: bool,
 
     /// How long a pop-up notification stays on screen, in seconds.

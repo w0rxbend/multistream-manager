@@ -370,7 +370,7 @@ fn draw_appearance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab)
         // Named for what it is, because the Notifications section next door
         // is about the *desktop's* pop-ups and confusing the two would send
         // somebody to the wrong switch.
-        ("In-app pop-ups", on_off(appearance.toasts)),
+        ("Routine pop-ups (problems always show)", on_off(appearance.toasts)),
         (
             "Terminal background",
             on_off(appearance.terminal_background),

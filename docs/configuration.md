@@ -428,7 +428,7 @@ animations = "fast"           # "fast", "reduced" or "off"
 splash = true                 # the animated start-up screen
 mouse = true                  # react to clicks and the wheel
 telemetry = false             # cpu / memory / frame rate in the tab bar
-toasts = true                 # pop-up notifications
+toasts = true                 # routine pop-ups (problems always show)
 toast_seconds = 5             # how long one stays up
 terminal_background = false   # repaint the terminal window's own background
 ```
@@ -503,8 +503,15 @@ error is likelier to be the thing you have to act on.
 <kbd>Alt</kbd>+<kbd>M</kbd> opens the full session history, so nothing that
 flashed past while you were reading chat is lost.
 
-`toasts = false` stops them appearing. The activity log still records
-everything either way, and the history is still there.
+`toasts = false` stops the *routine* ones appearing — progress, confirmations,
+"copied to the clipboard". Errors and warnings are always shown, whatever this
+setting says. That is deliberate: the activity log is only drawn at the bottom
+of the Stream Info tab, so an error raised while you are reading chat or
+adjusting OBS would otherwise be completely silent, and the person most likely
+to have turned pop-ups off is the person who is live right now.
+
+The activity log still records everything either way, and the history is still
+there.
 
 `toast_seconds` is clamped to between 1 and 60: a zero would make messages
 vanish before they could be read.

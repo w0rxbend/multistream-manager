@@ -1738,7 +1738,23 @@ impl App {
     /// the dashboard, a chat pane or the combined tab, and it goes away on
     /// its own.
     pub fn notify(&mut self, level: super::toast::Level, text: impl Into<String>) {
-        if !self.config.appearance.toasts {
+        // `toasts = false` turns off the *routine* pop-ups, never the ones
+        // that report a problem. It used to turn off all of them, and since
+        // `push_log` routes every error and warning through here, that meant
+        // switching off pop-ups also switched off every error report: a
+        // failed go-live, or a chat login expiring mid-stream, produced
+        // nothing at all if you happened to be on the Chat, OBS or Config
+        // tab, because the activity log is only drawn on Stream Info.
+        //
+        // The person most likely to turn pop-ups off is the person who is
+        // live right now — which is the person least able to go hunting for a
+        // log file. Silencing failures is the one thing this setting must not
+        // do.
+        let is_a_problem = matches!(
+            level,
+            super::toast::Level::Error | super::toast::Level::Warning
+        );
+        if !self.config.appearance.toasts && !is_a_problem {
             return;
         }
         self.toasts
@@ -5035,15 +5051,45 @@ mod tests {
         assert_eq!(app.log.len(), 2);
     }
 
+    /// Turning pop-ups off silences the routine ones only.
+    ///
+    /// The setting used to silence everything, including errors — and since
+    /// the activity log is drawn only on the Stream Info tab, a failure while
+    /// the user was reading chat produced nothing at all.
     #[test]
-    fn notifications_can_be_turned_off_entirely() {
+    fn turning_pop_ups_off_still_reports_problems() {
         let mut config = Config::default();
         config.appearance.toasts = false;
         let mut app = App::new(config);
         app.splash_skipped = true;
+
+        app.push_log(LogLevel::Info, "connecting to Twitch");
+        app.push_log(LogLevel::Success, "connected");
+        assert!(
+            app.toasts.visible_text().is_empty(),
+            "routine progress stays quiet"
+        );
+
         app.push_log(LogLevel::Error, "something broke");
-        assert!(app.toasts.visible_text().is_empty());
-        assert_eq!(app.log.len(), 1, "the log still records it");
+        assert!(
+            app.toasts
+                .visible_text()
+                .iter()
+                .any(|text| text.contains("something broke")),
+            "an error must always be shown: {:?}",
+            app.toasts.visible_text()
+        );
+
+        app.push_log(LogLevel::Warning, "that did nothing");
+        assert!(
+            app.toasts
+                .visible_text()
+                .iter()
+                .any(|text| text.contains("that did nothing")),
+            "a warning explains why a key did nothing, so it must be shown too"
+        );
+
+        assert_eq!(app.log.len(), 4, "the log still records everything");
     }
 
     /// Notifications must not disappear the moment a key is pressed: they
