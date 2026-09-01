@@ -483,6 +483,18 @@ impl ChatTabState {
         self.config.chat.notifications = config.chat.notifications;
     }
 
+    /// Turn chat logging on or off while the program is running.
+    ///
+    /// The logger is a live thing — it holds an open file and a rotation
+    /// count — so this builds a new one or drops the existing one rather than
+    /// letting the config copy drift from what is actually writing. Turning
+    /// logging off closes the file; turning it on starts a fresh one, which
+    /// means the log records from this moment rather than retroactively.
+    pub fn set_chat_logging(&mut self, on: bool) {
+        self.config.chat.chat_logging = on;
+        self.logger = if on { build_logger(&self.config) } else { None };
+    }
+
     /// Fold one event from a chat task into its chat's state.
     ///
     /// An event for a chat closed meanwhile is simply dropped — its task ends
@@ -1283,16 +1295,12 @@ fn build_logger(config: &Config) -> Option<crate::chat::chatlog::ChatLogger> {
     if !config.chat.chat_logging {
         return None;
     }
-    let dir = if config.chat.chat_log_dir.is_empty() {
-        match crate::paths::chat_log_dir() {
-            Ok(dir) => dir,
-            Err(err) => {
-                tracing::warn!(error = %format!("{err:#}"), "chat logging disabled");
-                return None;
-            }
+    let dir = match crate::paths::chat_log_dir_for(config) {
+        Ok(dir) => dir,
+        Err(err) => {
+            tracing::warn!(error = %format!("{err:#}"), "chat logging disabled");
+            return None;
         }
-    } else {
-        std::path::PathBuf::from(&config.chat.chat_log_dir)
     };
     Some(crate::chat::chatlog::ChatLogger::new(
         dir,

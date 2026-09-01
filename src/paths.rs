@@ -57,6 +57,20 @@ pub fn chat_log_dir() -> Result<PathBuf> {
     Ok(config_dir()?.join("chatlog"))
 }
 
+/// Where this configuration's chat logs actually go.
+///
+/// `[chat] chat_log_dir` wins when it is set, and the default above is used
+/// when it is empty. That rule was written out separately at every call site,
+/// which is two chances for the writer and the reader of the same logs to
+/// disagree about where they are.
+pub fn chat_log_dir_for(config: &crate::config::Config) -> Result<PathBuf> {
+    if config.chat.chat_log_dir.is_empty() {
+        chat_log_dir()
+    } else {
+        Ok(PathBuf::from(&config.chat.chat_log_dir))
+    }
+}
+
 /// `msm.log` — the log file. The terminal UI owns stdout, so any diagnostics
 /// have to go to a file instead of being printed.
 pub fn log_file() -> Result<PathBuf> {

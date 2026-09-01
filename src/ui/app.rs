@@ -1205,6 +1205,10 @@ impl App {
                 self.config_tab = Some(config);
                 return self.change_notification_setting();
             }
+            KeyCode::Enter if config.section == Section::Chat => {
+                self.config_tab = Some(config);
+                return self.change_chat_setting();
+            }
             _ if config.section == Section::Layout => {
                 match key.code {
                     KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -1400,6 +1404,30 @@ impl App {
                 "Mouse reporting changes when msm next starts.",
             );
         }
+        self.save_appearance()
+    }
+
+    /// Flip the chat-logging switch.
+    ///
+    /// This setting had no control anywhere in the interface — it could only
+    /// be turned on by editing config.toml — even though Housekeeping's
+    /// paid-event export reads the very logs it produces. That combination
+    /// meant the export appeared to work and wrote an empty file.
+    fn change_chat_setting(&mut self) -> Vec<Command> {
+        self.config.chat.chat_logging = !self.config.chat.chat_logging;
+        let state = if self.config.chat.chat_logging {
+            "on — messages from now on are written to disk"
+        } else {
+            "off — what is already recorded is kept"
+        };
+        self.notify(
+            super::toast::Level::Info,
+            format!("Chat logging: {state}"),
+        );
+        // The chat tab holds the live logger, so the switch has to reach it
+        // as well as the file: turning it on opens a log now rather than at
+        // the next start-up.
+        self.chat.set_chat_logging(self.config.chat.chat_logging);
         self.save_appearance()
     }
 
@@ -5856,6 +5884,27 @@ mod tests {
 
     /// Cleanup lists before it deletes. Removing things somebody made
     /// without showing them first would be asking for trust this has no way
+    /// Chat logging had no control anywhere in the interface — it could only
+    /// be turned on by editing config.toml — while Housekeeping's paid-event
+    /// export reads the very logs it produces.
+    #[test]
+    fn chat_logging_can_be_switched_from_the_config_tab() {
+        let mut app = app();
+        assert!(
+            !app.config.chat.chat_logging,
+            "off by default, which is why it needs a switch"
+        );
+
+        go_to_config_section(&mut app, super::super::config_tab::Section::Chat);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+
+        assert!(app.config.chat.chat_logging, "enter must flip it");
+
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(!app.config.chat.chat_logging, "and flip it back");
+    }
+
     /// Every switch in the Notifications section has to flip the setting the
     /// row next to it names.
     ///

@@ -433,7 +433,7 @@ activity log rather than into the pane.
 | Job | What it does |
 |---|---|
 | Find abandoned broadcasts | YouTube keeps every broadcast that was set up and never used. The first <kbd>Enter</kbd> **lists** them; a second <kbd>Enter</kbd> deletes the ones listed. Anything that has ever been live is neither listed nor touched. |
-| Export paid events to CSV | Every Super Chat, sticker and gift from the chat logs, written beside them as a spreadsheet. Needs `chat_logging` to have been on. |
+| Export paid events to CSV | Every Super Chat, sticker and gift from the chat logs, written beside them as a spreadsheet. Reads the chat logs, so it only covers what was recorded while chat logging was on — turn it on under Config → Chat. An export that finds nothing says so rather than reporting success over an empty file. |
 | List YouTube stream keys | The **ids** of the reusable stream keys on the channel, for `stream_id` under `[youtube]`. |
 
 > [!NOTE]

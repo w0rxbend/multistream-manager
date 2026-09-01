@@ -508,6 +508,27 @@ pub async fn run(
 
             Command::ExportSuperchats => {
                 let _ = events.send(match crate::maintenance::export_superchats(&config) {
+                    // Zero rows is almost always the same cause: the export
+                    // reads the chat logs, and the chat log is off by
+                    // default. Reporting a successful export of nothing was
+                    // technically true and completely useless — the
+                    // dependency was stated only in prose in the docs.
+                    Ok((path, 0)) if !config.chat.chat_logging => Event::Log {
+                        level: LogLevel::Warning,
+                        message: format!(
+                            "Nothing to export: chat logging is off, so no paid events have \
+                             been recorded. Turn it on under Config → Chat and it will record \
+                             from now on. (Wrote an empty {}.)",
+                            path.display()
+                        ),
+                    },
+                    Ok((path, 0)) => Event::Log {
+                        level: LogLevel::Warning,
+                        message: format!(
+                            "No paid events found in the chat logs — wrote an empty {}.",
+                            path.display()
+                        ),
+                    },
                     Ok((path, rows)) => Event::Log {
                         level: LogLevel::Success,
                         message: format!("Exported {rows} paid event(s) to {}", path.display()),

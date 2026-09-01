@@ -108,11 +108,7 @@ pub async fn delete_broadcasts(config: &Config, ids: &[StaleBroadcast]) -> Resul
 /// beside the logs it was made from, because that is where somebody will look
 /// for it and because it needs no question asked to decide.
 pub fn export_superchats(config: &Config) -> Result<(std::path::PathBuf, usize)> {
-    let dir = if config.chat.chat_log_dir.is_empty() {
-        crate::paths::chat_log_dir()?
-    } else {
-        std::path::PathBuf::from(&config.chat.chat_log_dir)
-    };
+    let dir = crate::paths::chat_log_dir_for(config)?;
 
     let out = dir.join("superchats.csv");
     let mut file =

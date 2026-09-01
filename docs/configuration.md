@@ -248,6 +248,12 @@ failures.
 
 ### The chat log settings
 
+This is the one `[chat]` setting with a switch in the interface: **Config →
+Chat**, where <kbd>Enter</kbd> turns it on or off and the section also reports
+how many log files there are and how much space they take. Turning it on starts
+a log immediately rather than at the next start-up; turning it off closes the
+file and keeps what was already written.
+
 With `chat_logging = true`, every message is appended to JSON Lines files —
 one object per line, which is a format both a script and a person can read.
 **Config → Housekeeping → *Export paid events to CSV*** reads them back into a

@@ -29,6 +29,8 @@ pub enum Section {
     Layout,
     Appearance,
     Notifications,
+    /// Chat settings that can be changed while the program is running.
+    Chat,
     Keys,
     Obs,
     Accounts,
@@ -58,7 +60,7 @@ impl Section {
             Section::Appearance => {
                 " j/k move   tab pane   enter change   esc back   q quit"
             }
-            Section::Notifications => {
+            Section::Notifications | Section::Chat => {
                 " j/k move   tab pane   enter toggle   esc back   q quit"
             }
             Section::Accounts => concat!(
@@ -78,10 +80,11 @@ impl Section {
         }
     }
 
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Layout,
         Section::Appearance,
         Section::Notifications,
+        Section::Chat,
         Section::Keys,
         Section::Obs,
         Section::Accounts,
@@ -95,6 +98,7 @@ impl Section {
             Section::Layout => "Layout",
             Section::Appearance => "Appearance",
             Section::Notifications => "Notifications",
+            Section::Chat => "Chat",
             Section::Keys => "Keys",
             Section::Obs => "OBS",
             Section::Accounts => "Accounts",
@@ -111,6 +115,7 @@ impl Section {
             Section::Layout => "Arrange the Combined tab",
             Section::Appearance => "Theme, motion, pop-ups",
             Section::Notifications => "Desktop alerts for stream events",
+            Section::Chat => "Message logging and scrollback",
             Section::Keys => "Every binding, and what it runs",
             Section::Obs => "Connection to OBS Studio",
             Section::Accounts => "Twitch and YouTube logins",
@@ -205,6 +210,7 @@ impl ConfigTab {
             Section::Layout => self.draft.panels().len(),
             Section::Appearance => APPEARANCE_ROWS,
             Section::Notifications => NOTIFICATION_ROWS,
+            Section::Chat => CHAT_ROWS,
             Section::Keys => app.keymap.all().len(),
             Section::Obs => 0,
             Section::Accounts => crate::model::Platform::ALL.len(),
@@ -429,6 +435,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Section::Layout => draw_layout_section(frame, inner, config),
         Section::Appearance => draw_appearance(frame, inner, app, config),
         Section::Notifications => draw_notifications(frame, inner, app, config),
+        Section::Chat => draw_chat(frame, inner, app, config),
         Section::Keys => draw_keys(frame, inner, app, config),
         Section::Obs => draw_obs(frame, inner, app),
         Section::Accounts => draw_accounts(frame, inner, app, config),
@@ -634,6 +641,96 @@ fn draw_notifications(frame: &mut Frame, area: Rect, app: &App, config: &ConfigT
     )));
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+}
+
+/// One chat setting that can be changed while the program is running.
+///
+/// Only the switches: `scrollback_limit` and the log rotation sizes are shown
+/// beside them as read-only, because changing those mid-session would mean
+/// rebuilding buffers that are holding a live conversation.
+pub const CHAT_ROWS: usize = 1;
+
+/// Chat settings. Small on purpose — most of `[chat]` is either a number that
+/// wants a text editor or a switch that lives next door under Notifications.
+fn draw_chat(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
+    let sk = theme::skin();
+    let chat = &app.config.chat;
+
+    let selected = config.focus == Focus::Contents && config.cursor == 0;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                if selected { "▸ " } else { "  " },
+                Style::new().fg(sk.accent),
+            ),
+            Span::styled(
+                format!("{:<26}", "Write a chat log to disk"),
+                Style::new().fg(sk.foreground),
+            ),
+            Span::styled(on_off(chat.chat_logging), Style::new().fg(sk.accent)),
+        ]),
+        Line::from(""),
+    ];
+
+    // Where it goes and how much is there. The rotation settings existed and
+    // nothing ever reported what was actually on disk.
+    match crate::paths::chat_log_dir_for(&app.config) {
+        Ok(dir) => {
+            let (files, bytes) = log_directory_size(&dir);
+            lines.push(Line::from(Span::styled(
+                format!("  {}", dir.display()),
+                Style::new().fg(sk.muted),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {files} file(s), {:.1} MB · rotates at {:.0} MB, keeps {}",
+                    bytes as f64 / (1024.0 * 1024.0),
+                    chat.chat_log_max_bytes as f64 / (1024.0 * 1024.0),
+                    chat.chat_log_max_files
+                ),
+                Style::new().fg(sk.muted),
+            )));
+        }
+        Err(err) => lines.push(Line::from(Span::styled(
+            format!("  the log directory is unavailable: {err:#}"),
+            Style::new().fg(sk.warning),
+        ))),
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  The log is what Housekeeping's paid-event export reads, so",
+        Style::new().fg(sk.muted),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  an export only covers what was recorded while this was on.",
+        Style::new().fg(sk.muted),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  Scrollback kept per chat: {} messages", chat.scrollback_limit),
+        Style::new().fg(sk.muted),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+/// How many chat log files there are and how much they take up.
+///
+/// Errors are swallowed into "nothing there": this is a line of information
+/// on a settings screen, and a directory that cannot be read is not worth
+/// failing a draw over.
+fn log_directory_size(dir: &std::path::Path) -> (usize, u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|meta| meta.is_file())
+        .fold((0, 0), |(count, bytes), meta| {
+            (count + 1, bytes + meta.len())
+        })
 }
 
 /// A switch's value as the section shows it.
