@@ -1467,6 +1467,11 @@ fn draw_chat_strip(frame: &mut Frame, area: Rect, state: &ChatTabState, platform
                 format!(" · filter: {}", chat.state.filters.summary()),
                 Style::default().fg(sk.warning),
             ));
+            // Which key undoes it. A filter hides most of the chat, and the
+            // digits that set one are on no other on-screen surface, so
+            // somebody who pressed `3` by accident could see that a filter
+            // was on without being told how to turn it off again.
+            spans.push(Span::styled(" (0 clears)", Style::default().fg(sk.muted)));
         }
         if !chat.state.search.is_empty() {
             spans.push(Span::styled(

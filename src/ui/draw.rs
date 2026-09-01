@@ -579,11 +579,29 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    if app.tab == super::app::Tab::Config {
+        // The hints come from the section that is open, because the sections
+        // do genuinely different things: `enter` toggles a notification,
+        // logs an account in, or runs a maintenance job depending on where
+        // you are, and the layout editor has nine keys nothing else has.
+        let hints = app
+            .config_tab
+            .as_ref()
+            .map(|config| config.section.footer_hints())
+            .unwrap_or(" j/k move   tab pane   esc back   q quit");
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hints, Style::new().fg(sk.muted)))),
+            area,
+        );
+        return;
+    }
+
     if app.tab == super::app::Tab::Chat {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " h/l pane   j/k scroll   [ ] chats   { } accounts   i compose   \
-                 space,c join   / search   ctrl+r reconnect   q quit",
+                 / search   1-4 filter (0 clears)   K inspect   d/t/b moderate   \
+                 ctrl+r reconnect   q quit",
                 Style::new().fg(sk.muted),
             ))),
             area,
@@ -1359,6 +1377,32 @@ mod tests {
         assert!(
             !screen.contains("Where are you streaming?"),
             "the platform picker is useless without credentials"
+        );
+    }
+
+    /// The Config tab had no footer branch at all, so it fell through and
+    /// advertised the Stream Info screen's keys — telling the user to press
+    /// `r` to refresh and `o` to open the watch page, neither of which does
+    /// anything there.
+    #[test]
+    fn the_config_tab_footer_names_the_section_s_own_keys() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("draw-config-footer");
+        let mut app = App::new(Config::default());
+        app.splash_skipped = true;
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('5'),
+            crossterm::event::KeyModifiers::ALT,
+        ));
+
+        let screen = render(&app, 120, 30);
+        assert!(
+            !screen.contains("o open watch page"),
+            "the Stream Info footer must not leak onto the Config tab: {screen}"
+        );
+        // The layout editor is the section the tab opens on.
+        assert!(
+            screen.contains("preset"),
+            "the layout editor's own keys must be named: {screen}"
         );
     }
 

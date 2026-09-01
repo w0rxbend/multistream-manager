@@ -38,6 +38,46 @@ pub enum Section {
 }
 
 impl Section {
+    /// The keys that actually do something in this section, for the footer.
+    ///
+    /// The Config tab had no footer branch at all, so it fell through and
+    /// advertised whichever Stream Info screen happened to be underneath —
+    /// telling the user to press `r` to refresh and `o` to open the watch
+    /// page, neither of which does anything here. A footer that names the
+    /// wrong keys is worse than no footer: it is a promise the tab does not
+    /// keep.
+    ///
+    /// The navigation keys are the same everywhere and come first; each
+    /// section adds its own.
+    pub fn footer_hints(self) -> &'static str {
+        match self {
+            Section::Layout => concat!(
+                " j/k move   tab pane   +/- size   J/K reorder   r rotate",
+                "   a add   d remove   p preset   s save   esc discard   q quit"
+            ),
+            Section::Appearance => {
+                " j/k move   tab pane   enter change   esc back   q quit"
+            }
+            Section::Notifications => {
+                " j/k move   tab pane   enter toggle   esc back   q quit"
+            }
+            Section::Accounts => concat!(
+                " j/k move   tab pane   enter log in/out   a add a chat account",
+                "   esc back   q quit"
+            ),
+            Section::Maintenance => {
+                " j/k move   tab pane   enter run   esc back   q quit"
+            }
+            Section::Diagnostics => {
+                " j/k move   tab pane   r re-run the checks   esc back   q quit"
+            }
+            // Read-only displays: nothing to say beyond how to get around.
+            Section::Keys | Section::Obs | Section::Paths => {
+                " j/k move   tab pane   esc back   q quit"
+            }
+        }
+    }
+
     pub const ALL: [Section; 9] = [
         Section::Layout,
         Section::Appearance,
