@@ -54,8 +54,8 @@ impl Section {
     pub fn footer_hints(self) -> &'static str {
         match self {
             Section::Layout => concat!(
-                " j/k move   tab pane   +/- size   J/K reorder   r rotate",
-                "   a add   d remove   p preset   s save   esc discard   q quit"
+                " j/k move   tab pane   +/- panel   </> row   J/K reorder   r rotate",
+                "   a add   d remove   p preset   u undo   s save   esc back   q quit"
             ),
             Section::Appearance => {
                 " j/k move   tab pane   enter change   esc back   q quit"
@@ -169,6 +169,12 @@ pub struct ConfigTab {
     /// was simply cut off. Scrolling is the difference between a self-check
     /// and a self-check you can finish reading.
     pub diagnostics_scroll: u16,
+    /// Previous states of the draft, for `u`.
+    ///
+    /// The editor had no undo, and `p` replaces the whole arrangement in one
+    /// keypress — so cycling past the preset you wanted meant rebuilding by
+    /// hand what one key had thrown away.
+    pub history: Vec<PaneLayout>,
     /// Which layout preset `p` will apply next.
     ///
     /// Its own counter, because the obvious thing — deriving it from
@@ -199,6 +205,7 @@ impl ConfigTab {
             diagnostics: Diagnostics::default(),
             preset_index: 0,
             diagnostics_scroll: 0,
+            history: Vec::new(),
         }
     }
 
@@ -471,7 +478,7 @@ fn draw_layout_section(frame: &mut Frame, area: Rect, config: &ConfigTab) {
     ])
     .split(area);
 
-    draw_preview(frame, rows[0], &config.draft);
+    draw_preview(frame, rows[0], &config.draft, config.cursor);
 
     let placed = config.draft.panels();
     let lines: Vec<Line> = placed
@@ -516,22 +523,32 @@ fn draw_layout_section(frame: &mut Frame, area: Rect, config: &ConfigTab) {
 
 /// Draw a miniature of the arrangement, using the same resolver the real tab
 /// uses — so the preview cannot disagree with the result.
-fn draw_preview(frame: &mut Frame, area: Rect, layout: &PaneLayout) {
+fn draw_preview(frame: &mut Frame, area: Rect, layout: &PaneLayout, cursor: usize) {
     let sk = theme::skin();
+    // The panel the cursor is on, in the same order the list below numbers
+    // them. Without it `J`/`K` and `+`/`-` were legible only as numbers
+    // changing in the list, while the picture — the whole point of a preview
+    // — said nothing about which box was about to move.
+    let selected = layout.panels().get(cursor).copied();
     for (panel, rect) in layout.resolve(area) {
         if rect.width < 2 || rect.height < 1 {
             continue;
         }
+        let is_selected = selected == Some(panel);
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::new().fg(sk.border));
+            .border_style(Style::new().fg(if is_selected { sk.accent } else { sk.border }));
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
         if inner.height > 0 {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     panel.title().to_string(),
-                    Style::new().fg(sk.accent),
+                    if is_selected {
+                        Style::new().fg(sk.accent).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::new().fg(sk.muted)
+                    },
                 )))
                 .wrap(Wrap { trim: true }),
                 inner,
@@ -1156,6 +1173,64 @@ pub mod edit {
         walk_weights(&mut layout.root, &mut 0, index, delta);
     }
 
+    /// Resize the *row* the panel at `index` sits in, rather than the panel.
+    ///
+    /// `resize` walks to a `Node::Panel` child and changes its weight, so a
+    /// `Node::Split` child's weight was unreachable — and that weight is what
+    /// decides how tall a row of panels is. "Make the chats taller" was
+    /// inexpressible from the editor, however many times you pressed `+`.
+    pub fn resize_row(layout: &mut PaneLayout, index: usize, delta: i16) -> bool {
+        let mut seen = 0;
+        walk_row_weights(&mut layout.root, &mut seen, index, delta)
+    }
+
+    /// Find the enclosing `Split` child that contains panel `target`, and
+    /// change *its* weight.
+    fn walk_row_weights(
+        node: &mut crate::layout::Node,
+        seen: &mut usize,
+        target: usize,
+        delta: i16,
+    ) -> bool {
+        let crate::layout::Node::Split { children, .. } = node else {
+            *seen += 1;
+            return false;
+        };
+
+        for child in children.iter_mut() {
+            match &mut child.node {
+                crate::layout::Node::Panel(_) => {
+                    *seen += 1;
+                }
+                nested => {
+                    let before = *seen;
+                    let panels = count_panels(nested);
+                    if target >= before && target < before + panels {
+                        // The row the target sits in. Never below one: a
+                        // weight of zero is a row that is present and
+                        // invisible.
+                        child.weight = (child.weight as i32 + delta as i32).clamp(1, 100) as u16;
+                        *seen += panels;
+                        return true;
+                    }
+                    if walk_row_weights(nested, seen, target, delta) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn count_panels(node: &crate::layout::Node) -> usize {
+        match node {
+            crate::layout::Node::Panel(_) => 1,
+            crate::layout::Node::Split { children, .. } => {
+                children.iter().map(|child| count_panels(&child.node)).sum()
+            }
+        }
+    }
+
     fn walk_weights(node: &mut crate::layout::Node, seen: &mut usize, target: usize, delta: i16) {
         match node {
             crate::layout::Node::Panel(_) => {
@@ -1361,6 +1436,37 @@ pub mod edit {
 mod tests {
     use super::*;
     use crate::layout::Layout as PaneLayout;
+
+    /// `resize` walks to a panel and changes its weight, so a nested split's
+    /// weight was unreachable — and that is the one that decides how tall a
+    /// row is. "Make the chats taller" could not be said at all.
+    #[test]
+    fn a_row_can_be_resized_as_well_as_a_panel() {
+        // A preset with nesting, which is what has rows to resize.
+        let mut layout = crate::layout::presets::by_name("stacked")
+            .or_else(|| {
+                crate::layout::presets::NAMES
+                    .iter()
+                    .find_map(|(name, _)| crate::layout::presets::by_name(name))
+            })
+            .expect("some preset exists");
+
+        // Find a panel that actually sits inside a nested split.
+        let resized = (0..layout.panels().len())
+            .find(|index| edit::resize_row(&mut layout.clone(), *index, 1));
+
+        if let Some(index) = resized {
+            let before = format!("{:?}", layout.root);
+            assert!(edit::resize_row(&mut layout, index, 1));
+            assert_ne!(
+                before,
+                format!("{:?}", layout.root),
+                "resizing the row has to change the arrangement"
+            );
+        }
+        // A flat layout has no row to resize, and says so rather than
+        // pretending: that is what the `false` return is for.
+    }
 
     /// Adding a panel to a layout reduced to one used to be a silent no-op —
     /// `tidy` leaves a bare `Node::Panel` root and the old `add` only pushed

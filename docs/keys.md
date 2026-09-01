@@ -495,16 +495,19 @@ uses, so it cannot disagree with the result.
 
 | Key | Does |
 |---|---|
-| <kbd>j</kbd> / <kbd>k</kbd> | Select a panel in the list |
-| <kbd>+</kbd> / <kbd>-</kbd> | Give the selected panel a larger or smaller share of the space |
+| <kbd>j</kbd> / <kbd>k</kbd> | Select a panel in the list. The selected one is outlined in the preview |
+| <kbd>+</kbd> / <kbd>-</kbd> | Give the selected **panel** a larger or smaller share of its row |
+| <kbd>&gt;</kbd> / <kbd>&lt;</kbd> | Give the **row** the panel sits in a larger or smaller share — this is how "make the chats taller" is said |
+| <kbd>J</kbd> / <kbd>K</kbd> | Move the selected panel along. The cursor follows it, so holding the key walks one panel rather than moving a different one each time |
 | <kbd>a</kbd> | Add the first panel that is not on the layout yet |
 | <kbd>d</kbd> | Remove the selected panel. The last one cannot be removed — a blank tab is indistinguishable from a broken one |
 | <kbd>r</kbd> | Rotate: turn rows into columns and back |
-| <kbd>p</kbd> | Cycle through the four presets |
+| <kbd>p</kbd> | Cycle through the presets. The toast says which one of how many |
+| <kbd>u</kbd> | Undo the last change. <kbd>p</kbd> replaces the whole arrangement in one keypress, so this is how you get back from cycling one past the one you wanted |
 | <kbd>s</kbd> | Save. Until you press this, nothing is applied |
 
-Leaving the tab with an unsaved edit throws the edit away and says so, rather
-than leaving it half applied. The eight panels and the file format behind all of
+<kbd>Esc</kbd> steps back to the section list; from there it leaves the tab, and
+an unsaved edit is thrown away with a warning rather than left half applied. The eight panels and the file format behind all of
 this are in [Configuration](configuration.md#layout).
 
 ### Diagnostics

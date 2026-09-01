@@ -1467,10 +1467,69 @@ impl App {
                 return self.go_to_tab(Tab::StreamInfo);
             }
             _ if config.section == Section::Layout => {
+                // Undo, before anything is changed. `p` replaces the whole
+                // arrangement in one keypress, so cycling past the preset you
+                // wanted meant rebuilding by hand what one key threw away.
+                if key.code == KeyCode::Char('u') {
+                    match config.history.pop() {
+                        Some(previous) => {
+                            config.draft = previous;
+                            config.dirty = true;
+                            config.cursor = config
+                                .cursor
+                                .min(config.draft.panels().len().saturating_sub(1));
+                        }
+                        None => self.notify(
+                            super::toast::Level::Info,
+                            "Nothing left to undo in this edit.",
+                        ),
+                    }
+                    self.config_tab = Some(config);
+                    return vec![];
+                }
+
+                // Every key below changes the arrangement, so the state
+                // before it is worth keeping. Bounded, because an editing
+                // session is not a document.
+                const UNDO_DEPTH: usize = 32;
+                if matches!(
+                    key.code,
+                    KeyCode::Char(
+                        '+' | '=' | '-' | '_' | 'J' | 'K' | 'r' | 'd' | 'a' | 'p' | '>' | '<'
+                    )
+                ) {
+                    config.history.push(config.draft.clone());
+                    if config.history.len() > UNDO_DEPTH {
+                        config.history.remove(0);
+                    }
+                }
+
                 match key.code {
                     KeyCode::Char('+') | KeyCode::Char('=') => {
                         edit::resize(&mut config.draft, config.cursor, 1);
                         config.dirty = true;
+                    }
+                    // The enclosing row rather than the panel. Without this
+                    // "make the chats taller" could not be said at all.
+                    KeyCode::Char('>') => {
+                        if edit::resize_row(&mut config.draft, config.cursor, 1) {
+                            config.dirty = true;
+                        } else {
+                            self.notify(
+                                super::toast::Level::Info,
+                                "This panel is not inside a row that can be resized.",
+                            );
+                        }
+                    }
+                    KeyCode::Char('<') => {
+                        if edit::resize_row(&mut config.draft, config.cursor, -1) {
+                            config.dirty = true;
+                        } else {
+                            self.notify(
+                                super::toast::Level::Info,
+                                "This panel is not inside a row that can be resized.",
+                            );
+                        }
                     }
                     KeyCode::Char('-') | KeyCode::Char('_') => {
                         edit::resize(&mut config.draft, config.cursor, -1);
