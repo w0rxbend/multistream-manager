@@ -636,9 +636,7 @@ fn draw_notifications(frame: &mut Frame, area: Rect, app: &App, config: &ConfigT
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
-/// Which row opens the Twitch event connection. The four rows after it are
-/// its children.
-
+/// A switch's value as the section shows it.
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.to_string()
 }
