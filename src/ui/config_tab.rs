@@ -906,12 +906,31 @@ fn draw_maintenance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab
     let mut lines = Vec::new();
     for (index, (name, explanation)) in MAINTENANCE_JOBS.iter().enumerate() {
         let selected = index == config.cursor && config.focus == Focus::Contents;
+        // The cleanup row says what the *next* press does, because the first
+        // press lists and the second deletes and the row used to read the
+        // same either way.
+        let armed = index == 0 && config.cleanup_listed;
+        let label = if armed {
+            format!(
+                "Delete the {} listed broadcast(s) — enter confirms",
+                app.stale_broadcasts.len()
+            )
+        } else {
+            (*name).to_string()
+        };
         let mut line = Line::from(vec![
             Span::styled(
                 if selected { "▸ " } else { "  " },
                 Style::new().fg(sk.accent),
             ),
-            Span::styled((*name).to_string(), Style::new().fg(sk.foreground)),
+            Span::styled(
+                label,
+                if armed {
+                    Style::new().fg(sk.error).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(sk.foreground)
+                },
+            ),
         ]);
         if selected {
             line = line.style(Style::new().bg(sk.selection));

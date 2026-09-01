@@ -291,6 +291,12 @@ pub struct App {
     /// a hardcoded ten lines, which is a page and a half on a laptop and a
     /// third of one on a tall terminal.
     pub terminal_area: ratatui::layout::Rect,
+    /// The abandoned broadcasts the last listing showed.
+    ///
+    /// Held so the confirming press can send back exactly what was on screen
+    /// — a delete has to act on the list the user approved, not on whatever a
+    /// second lookup happens to return.
+    pub stale_broadcasts: Vec<crate::model::StaleBroadcast>,
     /// The reusable YouTube stream ids the last listing found, as
     /// `(id, title)`.
     ///
@@ -561,6 +567,7 @@ impl App {
             auto_stop: plan.youtube_auto_stop,
             popup: None,
             terminal_area: ratatui::layout::Rect::default(),
+            stale_broadcasts: Vec::new(),
             youtube_streams: Vec::new(),
             reported_shortcut_clashes: std::collections::HashSet::new(),
             preflight: None,
@@ -1264,6 +1271,12 @@ impl App {
         };
         let rows = config.rows(self);
 
+        // Moving disarms the delete. An armed confirmation that survives
+        // walking away and coming back is one that fires on a keypress the
+        // user has forgotten they were part-way through — and this one
+        // deletes broadcasts.
+        config.cleanup_listed = false;
+
         match config.focus {
             Focus::Sections => {
                 let index = Section::ALL
@@ -1517,9 +1530,21 @@ impl App {
                 // The first press lists, the second deletes. Deleting things
                 // somebody made, without showing them first, would be asking
                 // for trust this has no way to earn.
-                let delete = config.cleanup_listed;
-                config.cleanup_listed = !delete;
-                vec![Command::Cleanup { delete }]
+                //
+                // The confirming press sends back the ids that were actually
+                // shown, so the delete cannot act on anything the user has
+                // not seen.
+                let confirming = config.cleanup_listed;
+                config.cleanup_listed = !confirming;
+                let approved = if confirming {
+                    self.stale_broadcasts
+                        .iter()
+                        .map(|broadcast| broadcast.id.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                vec![Command::Cleanup { approved }]
             }
             1 => vec![Command::ExportSuperchats],
             2 => vec![Command::ListStreams],
@@ -2316,6 +2341,16 @@ impl App {
     /// of logging in was to get to the main view.
     pub fn handle_event(&mut self, event: Event) -> Vec<Command> {
         match event {
+            Event::StaleBroadcasts(found) => {
+                // An empty list means the job finished — nothing is armed any
+                // more, whether it deleted, found nothing, or failed.
+                if found.is_empty() {
+                    if let Some(config) = self.config_tab.as_mut() {
+                        config.cleanup_listed = false;
+                    }
+                }
+                self.stale_broadcasts = found;
+            }
             Event::Streams(streams) => {
                 self.youtube_streams = streams;
                 if !self.youtube_streams.is_empty() {
@@ -6781,14 +6816,56 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Tab));
         let first = app.handle_key(KeyEvent::from(KeyCode::Enter));
         assert!(
-            matches!(first.as_slice(), [Command::Cleanup { delete: false }]),
+            matches!(first.as_slice(), [Command::Cleanup { approved }] if approved.is_empty()),
             "the first press only lists: {first:?}"
         );
 
+        // The listing comes back and is what the confirming press approves.
+        app.handle_event(Event::StaleBroadcasts(vec![stale("abc"), stale("def")]));
+
         let second = app.handle_key(KeyEvent::from(KeyCode::Enter));
+        match second.as_slice() {
+            [Command::Cleanup { approved }] => assert_eq!(
+                approved,
+                &vec!["abc".to_string(), "def".to_string()],
+                "the delete must name exactly what was shown"
+            ),
+            other => panic!("the second press deletes: {other:?}"),
+        }
+    }
+
+    fn stale(id: &str) -> crate::model::StaleBroadcast {
+        crate::model::StaleBroadcast {
+            id: id.into(),
+            title: format!("broadcast {id}"),
+            scheduled_start: None,
+            status: "created".into(),
+        }
+    }
+
+    /// An armed delete must not survive walking away and coming back. It
+    /// fires on a keypress the user has forgotten they were part-way
+    /// through, and what it fires is a deletion.
+    #[test]
+    fn moving_away_disarms_the_cleanup_confirmation() {
+        let mut app = app();
+        go_to_config_section(&mut app, super::super::config_tab::Section::Maintenance);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        app.handle_event(Event::StaleBroadcasts(vec![stale("abc")]));
         assert!(
-            matches!(second.as_slice(), [Command::Cleanup { delete: true }]),
-            "the second press deletes: {second:?}"
+            app.config_tab.as_ref().expect("the tab").cleanup_listed,
+            "the first press arms the delete"
+        );
+
+        // Move to another row and back.
+        app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        app.handle_key(KeyEvent::from(KeyCode::Char('k')));
+
+        let again = app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(
+            matches!(again.as_slice(), [Command::Cleanup { approved }] if approved.is_empty()),
+            "after moving, enter must list again rather than delete: {again:?}"
         );
     }
 

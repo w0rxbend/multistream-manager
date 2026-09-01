@@ -62,9 +62,15 @@ pub enum Command {
     LoginAdd(Platform),
     /// Forget a platform's saved login.
     Logout(Platform),
-    /// Find the YouTube broadcasts that were created and never went live, and
-    /// with `delete`, remove them.
-    Cleanup { delete: bool },
+    /// Find the YouTube broadcasts that were created and never went live.
+    ///
+    /// `approved` is empty for the listing press. On the confirming press it
+    /// carries the ids the user was actually shown, and only those are
+    /// deleted: the confirming press used to re-list and delete whatever came
+    /// back, so a broadcast created between the two presses — the one you had
+    /// just set up for tonight, say — was deleted without ever having
+    /// appeared in the list you approved.
+    Cleanup { approved: Vec<String> },
     /// Write every paid chat event to a CSV file beside the chat logs.
     ExportSuperchats,
     /// List the stream keys on the YouTube channel, so the id needed by
@@ -90,6 +96,9 @@ pub enum Command {
 pub enum Event {
     /// Connection finished; carries the account name resolved for each platform.
     Connected(Vec<(Platform, Result<String, String>)>),
+    /// The abandoned broadcasts a listing found, so the confirming press can
+    /// send back exactly what was shown.
+    StaleBroadcasts(Vec<crate::model::StaleBroadcast>),
     /// The reusable YouTube stream ids on the channel, as `(id, title)`.
     ///
     /// Deliberately not the endpoints themselves: an `IngestEndpoint` carries
@@ -452,65 +461,122 @@ pub async fn run(
                 });
             }
 
-            Command::Cleanup { delete } => {
+            Command::Cleanup { approved } => {
+                let confirming = !approved.is_empty();
                 let _ = events.send(Event::Log {
                     level: LogLevel::Info,
                     message: "Looking for abandoned YouTube broadcasts…".into(),
                 });
-                match crate::maintenance::find_stale_broadcasts(&config, ledger.clone()).await {
-                    Ok(stale) if stale.is_empty() => {
-                        let _ = events.send(Event::Log {
-                            level: LogLevel::Success,
-                            message: "No abandoned broadcasts to clean up.".into(),
-                        });
-                    }
-                    Ok(stale) if !delete => {
-                        // Listing before deleting, always. These are things
-                        // somebody made, and a command that removed them
-                        // without showing them first would be asking for
-                        // trust it has no way to earn.
-                        for broadcast in &stale {
-                            let _ = events.send(Event::Log {
-                                level: LogLevel::Info,
-                                message: format!("  {} — {}", broadcast.id, broadcast.title),
-                            });
-                        }
-                        let _ = events.send(Event::Log {
-                            level: LogLevel::Warning,
-                            message: format!(
-                                "{} abandoned broadcast(s). Press D again to delete them.",
-                                stale.len()
-                            ),
-                        });
-                    }
-                    Ok(stale) => match crate::maintenance::delete_broadcasts(&config, &stale, ledger.clone()).await
-                    {
-                        Ok(report) => {
-                            for (title, reason) in &report.failed {
-                                let _ = events.send(Event::Log {
-                                    level: LogLevel::Warning,
-                                    message: format!("Could not delete {title}: {reason}"),
-                                });
-                            }
-                            let _ = events.send(Event::Log {
-                                level: LogLevel::Success,
-                                message: report.describe(),
-                            });
-                        }
-                        Err(err) => {
-                            let _ = events.send(Event::Log {
-                                level: LogLevel::Error,
-                                message: format!("Cleanup failed: {err:#}"),
-                            });
-                        }
-                    },
+
+                // The list is always taken fresh, even on the confirming
+                // press — but on that press it is used to *narrow* what was
+                // approved, never to widen it.
+                let found = match crate::maintenance::find_stale_broadcasts(&config, ledger.clone())
+                    .await
+                {
+                    Ok(found) => found,
                     Err(err) => {
                         let _ = events.send(Event::Log {
                             level: LogLevel::Error,
-                            message: format!("Could not look for broadcasts: {err:#}"),
+                            message: format!("Cleanup failed: {err:#}"),
+                        });
+                        let _ = events.send(Event::StaleBroadcasts(Vec::new()));
+                        continue;
+                    }
+                };
+
+                if found.is_empty() {
+                    let _ = events.send(Event::Log {
+                        level: LogLevel::Success,
+                        message: "No abandoned broadcasts to clean up.".into(),
+                    });
+                    let _ = events.send(Event::StaleBroadcasts(Vec::new()));
+                    continue;
+                }
+
+                if !confirming {
+                    // Listing before deleting, always. These are things
+                    // somebody made, and a command that removed them without
+                    // showing them first would be asking for trust it has no
+                    // way to earn.
+                    for broadcast in &found {
+                        // The status and the scheduled time are the whole
+                        // reason each one was picked out, and the line used to
+                        // show neither.
+                        let when = broadcast
+                            .scheduled_start
+                            .map(|at| {
+                                format!(
+                                    ", scheduled {}",
+                                    at.with_timezone(&chrono::Local).format("%d %b %H:%M")
+                                )
+                            })
+                            .unwrap_or_default();
+                        let _ = events.send(Event::Log {
+                            level: LogLevel::Info,
+                            message: format!(
+                                "  {} — {}{when} (id {})",
+                                broadcast.title, broadcast.status, broadcast.id
+                            ),
+                        });
+                    }
+                    let _ = events.send(Event::Log {
+                        level: LogLevel::Warning,
+                        message: format!(
+                            "{} abandoned broadcast(s). Press enter again to delete them.",
+                            found.len()
+                        ),
+                    });
+                    let _ = events.send(Event::StaleBroadcasts(found));
+                    continue;
+                }
+
+                // Only what was both approved and still abandoned.
+                let (to_delete, appeared): (Vec<_>, Vec<_>) = found
+                    .into_iter()
+                    .partition(|broadcast| approved.contains(&broadcast.id));
+                if !appeared.is_empty() {
+                    let _ = events.send(Event::Log {
+                        level: LogLevel::Warning,
+                        message: format!(
+                            "{} broadcast(s) appeared since the list and were left alone.",
+                            appeared.len()
+                        ),
+                    });
+                }
+                if to_delete.is_empty() {
+                    let _ = events.send(Event::Log {
+                        level: LogLevel::Success,
+                        message: "Nothing left to delete — the listed broadcasts are already gone."
+                            .into(),
+                    });
+                    let _ = events.send(Event::StaleBroadcasts(Vec::new()));
+                    continue;
+                }
+
+                match crate::maintenance::delete_broadcasts(&config, &to_delete, ledger.clone())
+                    .await
+                {
+                    Ok(report) => {
+                        for (title, reason) in &report.failed {
+                            let _ = events.send(Event::Log {
+                                level: LogLevel::Warning,
+                                message: format!("Could not delete {title}: {reason}"),
+                            });
+                        }
+                        let _ = events.send(Event::Log {
+                            level: LogLevel::Success,
+                            message: report.describe(),
+                        });
+                    }
+                    Err(err) => {
+                        let _ = events.send(Event::Log {
+                            level: LogLevel::Error,
+                            message: format!("Cleanup failed: {err:#}"),
                         });
                     }
                 }
+                let _ = events.send(Event::StaleBroadcasts(Vec::new()));
             }
 
             Command::ExportSuperchats => {
