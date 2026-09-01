@@ -667,7 +667,7 @@ impl App {
             broadcaster_id,
             crate::chat::source::token_provider(&self.config, Platform::Twitch.slug()),
             self.config.twitch.client_id(),
-            reqwest::Client::new(),
+            crate::backend::http_client().unwrap_or_default(),
             updates_tx,
         );
         tracing::info!("watching Twitch events");

@@ -206,15 +206,11 @@ impl ChatTabState {
             logger: build_logger(config),
             tab_visible: false,
             config: config.clone(),
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .user_agent(concat!("multistream-manager/", env!("CARGO_PKG_VERSION")))
-                .build()
-                // Building only fails over TLS backend misconfiguration,
-                // which the streaming engine would already have surfaced;
-                // fall back to the default client rather than poisoning the
-                // whole UI over a chat-only concern.
-                .unwrap_or_default(),
+            // Building only fails over TLS backend misconfiguration, which the
+            // streaming engine would already have surfaced; fall back to the
+            // default client rather than poisoning the whole UI over a
+            // chat-only concern.
+            http: crate::backend::http_client().unwrap_or_default(),
         }
     }
 

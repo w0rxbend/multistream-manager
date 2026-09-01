@@ -610,17 +610,11 @@ fn callback_page(heading: &str, message: &str, success: bool) -> String {
 
 /// The HTTP client used for talking to a token endpoint.
 ///
-/// The timeout is the point. A plain `reqwest::Client::new()` waits forever,
-/// and the silent token refresh runs at the start of every statistics poll
-/// and every go-live — so a connection that black-holes (a captive portal, a
-/// broken VPN) used to hang the refresh and, with it, the entire dashboard,
-/// with no error and no way out short of killing the process.
+/// See [`crate::backend::http_client`] for why the timeouts on it matter; the
+/// token refresh is the path that hurts most when a connection black-holes,
+/// because it runs at the start of every statistics poll and every go-live.
 fn token_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("building the HTTP client for the token request")
+    crate::backend::http_client().context("for the token request")
 }
 
 /// Trade the one-time authorisation code for real tokens.

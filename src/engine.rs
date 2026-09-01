@@ -9,7 +9,7 @@
 //! and you should still get its URL and stream key. Nothing is rolled back, and
 //! nothing is hidden — you get one result per platform and the UI shows both.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::auth;
@@ -51,11 +51,7 @@ impl Engine {
     ) -> Result<(Self, Vec<(Platform, String)>)> {
         // One HTTP client shared by every backend, so connections are pooled
         // rather than re-established for each call.
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .user_agent(concat!("multistream-manager/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .context("building the HTTP client")?;
+        let http = crate::backend::http_client()?;
 
         let mut failures: Vec<(Platform, String)> = Vec::new();
 

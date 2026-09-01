@@ -5,7 +5,7 @@
 //! holds a list of `Box<dyn Backend>` and treats them identically. Adding Kick
 //! or Trovo later means writing one new file, not touching the UI.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -23,6 +23,39 @@ use crate::model::{
 /// backend because every platform has the same problem and should answer it the
 /// same way.
 pub const AUDIENCE_REFRESH: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// How long to wait for a TCP connection and a TLS handshake before giving up.
+///
+/// Separate from the overall timeout because the two failures are different:
+/// a slow response is a busy server, while a connection that never completes
+/// is usually a captive portal or a broken VPN black-holing the packets. That
+/// second case used to hang the silent token refresh — which runs at the start
+/// of every statistics poll and every go-live — with no error and no way out
+/// short of killing the process.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long any single request may take in total, headers and body included.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The one HTTP client every part of the application should use.
+///
+/// Before this existed there were five hand-rolled `reqwest::Client`s that
+/// disagreed about their timeouts, and the EventSub one had none at all — so
+/// the same network fault behaved differently depending on which feature hit
+/// it first. Building the client here means the timeouts and the user agent
+/// are decided once.
+///
+/// Clones share the underlying connection pool, so passing a clone to each
+/// backend is both cheap and the reason connections are reused rather than
+/// re-established per call.
+pub fn http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .user_agent(concat!("multistream-manager/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("building the HTTP client")
+}
 
 /// A boxed future, which is how a trait object can have async methods without
 /// pulling in the `async-trait` crate.

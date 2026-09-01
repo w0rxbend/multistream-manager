@@ -109,11 +109,7 @@ async fn resolve_identity(
     platform: Platform,
     access_token: &str,
 ) -> Result<store::AccountIdentity> {
-    let http = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .context("building the HTTP client for the identity lookup")?;
+    let http = crate::backend::http_client().context("for the identity lookup")?;
 
     match platform {
         Platform::Twitch => {
