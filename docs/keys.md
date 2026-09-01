@@ -181,7 +181,6 @@ letter goes to that and find keeps `f`.
 |---|---|---|
 | <kbd>c</kbd> <kbd>c</kbd> | `chat.compose` | Write a message |
 | <kbd>c</kbd> <kbd>j</kbd> | `chat.join` | Join a channel |
-| `chat.close` | Close this chat |
 | <kbd>c</kbd> <kbd>x</kbd> | `chat.close` | Close this chat |
 | <kbd>c</kbd> <kbd>r</kbd> | `chat.reconnect` | Reconnect chat |
 | <kbd>c</kbd> <kbd>s</kbd> | `chat.search` | Search chat |
@@ -293,6 +292,30 @@ side, Twitch's Helix moderation endpoints on the other, because Twitch removed
 moderation commands from IRC in 2023 — but nothing about that shows in the
 keys. Moderating a Twitch channel you do not own works if you are a moderator
 there; Twitch checks that itself and says so if you are not.
+
+### Editing what you are typing
+
+The message box is a full text field, with the same keys as the metadata form.
+
+| Key | What it does |
+|---|---|
+| <kbd>←</kbd> <kbd>→</kbd> | Move the caret |
+| <kbd>Home</kbd> <kbd>End</kbd> | Start and end of the line |
+| <kbd>Backspace</kbd> <kbd>Delete</kbd> | Remove one character either side of the caret |
+| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Delete the word before the caret, as in every Unix shell |
+| <kbd>Ctrl</kbd>+<kbd>U</kbd> | Throw the whole draft away |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Walk back through what you have already sent in this chat |
+| <kbd>Tab</kbd> | Complete a half-typed <kbd>@</kbd>mention from the roster |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | Emoji picker |
+
+A character means a grapheme cluster, not a byte or a code point: one
+<kbd>Backspace</kbd> removes a whole emoji, including the multi-part ones like
+flags and families.
+
+The send history is per chat and holds the last 50 messages, so recalling in
+one channel never offers what you said in another. Sending the same thing twice
+in a row stores it once. Pressing <kbd>↑</kbd> stashes whatever you were
+typing, and <kbd>↓</kbd> back past the newest entry gives it back.
 
 ### Composer commands
 
@@ -594,6 +617,7 @@ dot is the group the action appears under in the which-key popup.
 | `chat.search_next` | Next match |
 | `chat.search_previous` | Previous match |
 | `chat.join` | Join a channel |
+| `chat.close` | Close this chat |
 | `chat.reconnect` | Reconnect chat |
 | `chat.next` | Next chat |
 | `chat.previous` | Previous chat |

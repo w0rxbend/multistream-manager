@@ -1,23 +1,28 @@
 //! A single-line text input with a movable caret.
 //!
 //! `ratatui` draws widgets but does not manage editable text, so this fills that
-//! gap. Everything is indexed by **character**, never by byte, so an emoji or an
-//! accented letter in a stream title behaves like any other character instead of
-//! panicking on a byte boundary.
+//! gap. Everything is indexed by **grapheme cluster** — never by byte, and never
+//! by `char` either. A byte index panics halfway through a multi-byte letter; a
+//! `char` index does not panic, but it happily cuts a family emoji or a
+//! flag in half, because those are several code points joined together. What a
+//! person means by "one character" when they press Backspace is a grapheme
+//! cluster, so that is the unit.
+
+use unicode_segmentation::UnicodeSegmentation;
 
 /// One editable text field.
 #[derive(Debug, Clone, Default)]
 pub struct TextInput {
     /// The current contents.
     value: String,
-    /// Caret position, counted in characters from the start.
+    /// Caret position, counted in grapheme clusters from the start.
     cursor: usize,
 }
 
 impl TextInput {
     pub fn new(value: impl Into<String>) -> Self {
         let value = value.into();
-        let cursor = value.chars().count();
+        let cursor = count(&value);
         Self { value, cursor }
     }
 
@@ -32,15 +37,15 @@ impl TextInput {
     /// Replace the contents, putting the caret at the end.
     pub fn set(&mut self, value: impl Into<String>) {
         self.value = value.into();
-        self.cursor = self.value.chars().count();
+        self.cursor = count(&self.value);
     }
 
-    /// Convert the character-indexed caret into a byte index, which is what
-    /// `String::insert` and `String::remove` need.
-    fn byte_offset(&self, char_index: usize) -> usize {
+    /// Convert the grapheme-indexed caret into a byte index, which is what
+    /// `String::insert` and `String::replace_range` need.
+    fn byte_offset(&self, index: usize) -> usize {
         self.value
-            .char_indices()
-            .nth(char_index)
+            .grapheme_indices(true)
+            .nth(index)
             .map(|(offset, _)| offset)
             .unwrap_or(self.value.len())
     }
@@ -51,23 +56,27 @@ impl TextInput {
         self.cursor += 1;
     }
 
-    /// Delete the character before the caret (the Backspace key).
+    /// Delete the grapheme before the caret (the Backspace key).
+    ///
+    /// A whole cluster, so one press never leaves half an emoji behind.
     pub fn backspace(&mut self) {
         if self.cursor == 0 {
             return;
         }
-        let offset = self.byte_offset(self.cursor - 1);
-        self.value.remove(offset);
+        let start = self.byte_offset(self.cursor - 1);
+        let end = self.byte_offset(self.cursor);
+        self.value.replace_range(start..end, "");
         self.cursor -= 1;
     }
 
-    /// Delete the character after the caret (the Delete key).
+    /// Delete the grapheme after the caret (the Delete key).
     pub fn delete(&mut self) {
-        if self.cursor >= self.value.chars().count() {
+        if self.cursor >= count(&self.value) {
             return;
         }
-        let offset = self.byte_offset(self.cursor);
-        self.value.remove(offset);
+        let start = self.byte_offset(self.cursor);
+        let end = self.byte_offset(self.cursor + 1);
+        self.value.replace_range(start..end, "");
     }
 
     pub fn left(&mut self) {
@@ -75,7 +84,7 @@ impl TextInput {
     }
 
     pub fn right(&mut self) {
-        self.cursor = (self.cursor + 1).min(self.value.chars().count());
+        self.cursor = (self.cursor + 1).min(count(&self.value));
     }
 
     pub fn home(&mut self) {
@@ -83,7 +92,34 @@ impl TextInput {
     }
 
     pub fn end(&mut self) {
-        self.cursor = self.value.chars().count();
+        self.cursor = count(&self.value);
+    }
+
+    /// Append text at the caret, leaving the caret after what was added.
+    ///
+    /// Used by the emoji picker and the @mention completion, which insert a
+    /// whole run at once rather than a keystroke at a time.
+    pub fn insert_str(&mut self, text: &str) {
+        let offset = self.byte_offset(self.cursor);
+        self.value.insert_str(offset, text);
+        self.cursor += count(text);
+    }
+
+    /// Replace the run of graphemes `from..self.cursor` with `text`.
+    ///
+    /// This is what completing a half-typed @mention needs: cut back to where
+    /// the partial name started and put the full one in its place.
+    pub fn replace_back_to(&mut self, from: usize, text: &str) {
+        let from = from.min(self.cursor);
+        let start = self.byte_offset(from);
+        let end = self.byte_offset(self.cursor);
+        self.value.replace_range(start..end, text);
+        self.cursor = from + count(text);
+    }
+
+    /// Where the caret is, counted in grapheme clusters.
+    pub fn cursor(&self) -> usize {
+        self.cursor
     }
 
     /// Delete the word before the caret (Ctrl+W, as in every Unix shell).
@@ -91,13 +127,14 @@ impl TextInput {
     /// Skips any run of spaces first, then deletes back to the start of the
     /// word, so pressing it after "hello world   " removes "world   ".
     pub fn delete_word_before(&mut self) {
-        let chars: Vec<char> = self.value.chars().collect();
+        let clusters: Vec<&str> = self.value.graphemes(true).collect();
+        let blank = |cluster: &str| cluster.chars().all(char::is_whitespace);
         let mut position = self.cursor;
 
-        while position > 0 && chars[position - 1].is_whitespace() {
+        while position > 0 && blank(clusters[position - 1]) {
             position -= 1;
         }
-        while position > 0 && !chars[position - 1].is_whitespace() {
+        while position > 0 && !blank(clusters[position - 1]) {
             position -= 1;
         }
 
@@ -113,9 +150,9 @@ impl TextInput {
         self.cursor = 0;
     }
 
-    /// The number of characters, for the "87/100" counters in the form.
+    /// The number of grapheme clusters, for the "87/100" counters in the form.
     pub fn len_chars(&self) -> usize {
-        self.value.chars().count()
+        count(&self.value)
     }
 
     /// The slice of text to display when the field is narrower than its content,
@@ -128,27 +165,32 @@ impl TextInput {
             return (String::new(), 0);
         }
 
-        let chars: Vec<char> = self.value.chars().collect();
+        let clusters: Vec<&str> = self.value.graphemes(true).collect();
         // `<`, not `<=`, because the caret needs a cell of its own. The caret
         // sits *after* the last character while you are typing, so a value that
         // exactly fills the window needs width + 1 cells to show both the text
         // and the caret — one more than there is. Returning the whole value here
         // would push the caret off the end of the field, where it is clipped and
         // the field looks like it has stopped accepting input.
-        if chars.len() < width {
+        if clusters.len() < width {
             return (self.value.clone(), self.cursor);
         }
 
         // Keep the caret inside the window, biased so there is context on the
         // left once you have scrolled away from the start.
         let start = self.cursor.saturating_sub(width.saturating_sub(1));
-        let end = (start + width).min(chars.len());
+        let end = (start + width).min(clusters.len());
 
         (
-            chars[start..end].iter().collect(),
+            clusters[start..end].concat(),
             self.cursor.saturating_sub(start),
         )
     }
+}
+
+/// How many grapheme clusters are in `text`.
+fn count(text: &str) -> usize {
+    text.graphemes(true).count()
 }
 
 #[cfg(test)]

@@ -103,6 +103,25 @@ pub enum ChatFocus {
     TimeoutPrompt(String),
 }
 
+/// One editing operation on the composer.
+///
+/// A small enum rather than the key events themselves, so the chat state
+/// knows nothing about crossterm and the key handler knows nothing about how
+/// text is stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposeEdit {
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    /// Ctrl+W, as in every Unix shell.
+    DeleteWord,
+    /// Ctrl+U: throw the whole draft away.
+    Clear,
+}
+
 /// How many emoji candidates the picker offers.
 ///
 /// Shared by the drawing and the key handling, so the selection cursor can
@@ -691,28 +710,47 @@ impl ChatTabState {
         }
     }
 
-    /// Append typed text to the focused chat's composer draft.
+    /// Type one character into the focused chat's composer, at the caret.
     pub fn compose_push(&mut self, c: char) {
         if let Some(chat) = self.active_chat_mut() {
             if c == '\n' || c == '\r' {
                 return;
             }
-            chat.state.draft.push(c);
+            chat.state.draft.insert(c);
         }
     }
 
-    /// Delete one grapheme cluster from the composer (never half an emoji).
-    pub fn compose_backspace(&mut self) {
+    /// Walk the focused chat's send history into the composer.
+    ///
+    /// `back` is Up (older). Does nothing at either end of the history, so a
+    /// stray key press cannot wipe what is being typed.
+    pub fn compose_recall(&mut self, back: bool) {
         if let Some(chat) = self.active_chat_mut() {
-            let boundary = chat
-                .state
-                .draft
-                .grapheme_indices(true)
-                .next_back()
-                .map(|(i, _)| i);
-            if let Some(i) = boundary {
-                chat.state.draft.truncate(i);
+            if let Some(text) = chat.state.recall_sent(back) {
+                chat.state.draft.set(text);
             }
+        }
+    }
+
+    /// Run one editing key over the composer.
+    ///
+    /// Everything the metadata form's fields have already understood —
+    /// arrows, Home/End, Ctrl+W, Ctrl+U — now that the draft is a real
+    /// [`TextInput`] rather than a string with an implied caret at the end.
+    pub fn compose_edit(&mut self, edit: ComposeEdit) {
+        let Some(chat) = self.active_chat_mut() else {
+            return;
+        };
+        let draft = &mut chat.state.draft;
+        match edit {
+            ComposeEdit::Backspace => draft.backspace(),
+            ComposeEdit::Delete => draft.delete(),
+            ComposeEdit::Left => draft.left(),
+            ComposeEdit::Right => draft.right(),
+            ComposeEdit::Home => draft.home(),
+            ComposeEdit::End => draft.end(),
+            ComposeEdit::DeleteWord => draft.delete_word_before(),
+            ComposeEdit::Clear => draft.clear(),
         }
     }
 
@@ -725,7 +763,7 @@ impl ChatTabState {
         let Some(chat) = self.active_chat_mut() else {
             return;
         };
-        let text = chat.state.draft.trim().to_string();
+        let text = chat.state.draft.value().trim().to_string();
         if text.is_empty() {
             return;
         }
@@ -737,7 +775,7 @@ impl ChatTabState {
             SlashVerdict::NotACommand => text,
             // `//text` escaped a leading slash; send what is left of it.
             SlashVerdict::Literal(message) => {
-                chat.state.draft = message.clone();
+                chat.state.draft.set(message.clone());
                 message
             }
             SlashVerdict::Refused(reason) => {
@@ -806,12 +844,15 @@ impl ChatTabState {
             return;
         }
         let reply_to = chat.state.reply_to.as_ref().map(|(id, _)| id.clone());
+        // Kept for the send history, since `text` is moved into the command.
+        let sent_text = text.clone();
         match chat
             .handle
             .commands
             .try_send(ChatCommand::Send { text, reply_to })
         {
             Ok(()) => {
+                chat.state.remember_sent(&sent_text);
                 chat.state.draft.clear();
                 // The reply is only spent once the chat task has actually
                 // accepted the message; clearing it earlier meant a refused
@@ -860,7 +901,17 @@ impl ChatTabState {
         let Some(chat) = self.active_chat_mut() else {
             return;
         };
-        let Some(prefix) = mention_prefix(&chat.state.draft) else {
+        // Completion works on the text before the caret, so completing a
+        // mention typed in the middle of a sentence no longer overwrites
+        // everything after it.
+        let before_caret: String = chat
+            .state
+            .draft
+            .value()
+            .graphemes(true)
+            .take(chat.state.draft.cursor())
+            .collect();
+        let Some(prefix) = mention_prefix(&before_caret) else {
             return;
         };
         let typed = prefix.trim_start_matches('@').to_string();
@@ -870,18 +921,18 @@ impl ChatTabState {
         let completion = format!("@{} ", entry.name());
         // mention_prefix may return the word with or without its @ — cut the
         // @ too either way, since the completion re-adds it.
-        let mut cut = chat.state.draft.len() - prefix.len();
-        if !prefix.starts_with('@') && chat.state.draft[..cut].ends_with('@') {
-            cut -= 1;
+        let mut cut_bytes = before_caret.len() - prefix.len();
+        if !prefix.starts_with('@') && before_caret[..cut_bytes].ends_with('@') {
+            cut_bytes -= 1;
         }
-        chat.state.draft.truncate(cut);
-        chat.state.draft.push_str(&completion);
+        let cut = before_caret[..cut_bytes].graphemes(true).count();
+        chat.state.draft.replace_back_to(cut, &completion);
     }
 
     /// Insert an emoji from the picker into the composer draft.
     pub fn insert_emoji(&mut self, emoji: &str) {
         if let Some(chat) = self.active_chat_mut() {
-            chat.state.draft.push_str(emoji);
+            chat.state.draft.insert_str(emoji);
         }
     }
 
@@ -1829,7 +1880,13 @@ fn draw_composer(
                 let chat = state
                     .active_key(platform)
                     .and_then(|key| state.open.get(key));
-                let draft = chat.map(|c| c.state.draft.clone()).unwrap_or_default();
+                let draft = chat
+                    .map(|c| c.state.draft.value().to_string())
+                    .unwrap_or_default();
+                // Where the caret actually is, which is no longer always the
+                // end: the draft can be edited in the middle now, and a caret
+                // drawn in the wrong place would be worse than none at all.
+                let caret = chat.map(|c| c.state.draft.cursor()).unwrap_or(0);
                 let mut spans = Vec::new();
                 if let Some((_, name)) = chat.and_then(|c| c.state.reply_to.as_ref()) {
                     spans.push(Span::styled(
@@ -1838,8 +1895,11 @@ fn draw_composer(
                     ));
                 }
                 spans.push(Span::styled("> ", Style::default().fg(sk.accent)));
-                spans.push(Span::raw(draft));
+                let before: String = draft.graphemes(true).take(caret).collect();
+                let after: String = draft.graphemes(true).skip(caret).collect();
+                spans.push(Span::raw(before));
                 spans.push(Span::styled("▏", Style::default().fg(sk.accent)));
+                spans.push(Span::raw(after));
                 Line::from(spans)
             }
             ChatFocus::Normal => {
@@ -2012,6 +2072,40 @@ mod tests {
     /// The event this whole feature exists for. A raid gives you seconds to
     /// greet a few hundred people, and by default the pop-up fires whether or
     /// not the chat pane happens to be on screen — because during a stream it
+    /// The composer used to support exactly two operations: append a
+    /// character, and delete the last one. Fixing a typo six words back meant
+    /// backspacing over everything after it.
+    #[tokio::test]
+    async fn the_composer_can_be_edited_in_the_middle() {
+        let mut state = tab_state(1, 0);
+        with_open_chat(&mut state, Notifier::new(false));
+
+        for c in "helo world".chars() {
+            state.compose_push(c);
+        }
+        // Back to just after "hel", and put the missing l in.
+        for _ in 0..7 {
+            state.compose_edit(ComposeEdit::Left);
+        }
+        state.compose_push('l');
+
+        assert_eq!(
+            state.active_chat_mut().unwrap().state.draft.value(),
+            "hello world"
+        );
+
+        // Ctrl+W removes the word before the caret, not the last word typed.
+        state.compose_edit(ComposeEdit::End);
+        state.compose_edit(ComposeEdit::DeleteWord);
+        assert_eq!(
+            state.active_chat_mut().unwrap().state.draft.value(),
+            "hello "
+        );
+
+        state.compose_edit(ComposeEdit::Clear);
+        assert!(state.active_chat_mut().unwrap().state.draft.is_empty());
+    }
+
     /// The picker draws a list of candidates, and for a long time only its
     /// first entry could ever be inserted — the list was decoration that
     /// misrepresented what the keys did.
@@ -2029,7 +2123,7 @@ mod tests {
         state.insert_emoji(candidates[1].emoji);
 
         assert_eq!(
-            state.active_chat_mut().unwrap().state.draft,
+            state.active_chat_mut().unwrap().state.draft.value(),
             candidates[1].emoji,
             "the second candidate must be insertable, not only the first"
         );
@@ -2205,9 +2299,9 @@ mod tests {
         for c in "hi 👋".chars() {
             state.compose_push(c);
         }
-        state.compose_backspace();
+        state.compose_edit(ComposeEdit::Backspace);
         let key = state.active_key(Platform::Twitch).unwrap().clone();
-        assert_eq!(state.open[&key].state.draft, "hi ", "one grapheme removed");
+        assert_eq!(state.open[&key].state.draft.value(), "hi ", "one grapheme removed");
 
         state.handle_event(
             key.clone(),
@@ -2446,7 +2540,7 @@ mod tests {
         {
             let chat = state.open.get_mut(&key).unwrap();
             chat.state.reply_to = Some(("parent-id".into(), "someone".into()));
-            chat.state.draft = "sure thing".into();
+            chat.state.draft.set("sure thing");
             // Fill the command queue so the next send cannot be accepted.
             while chat
                 .handle
@@ -2462,7 +2556,7 @@ mod tests {
         state.compose_send();
 
         let chat = &state.open[&key];
-        assert_eq!(chat.state.draft, "sure thing", "the draft is kept");
+        assert_eq!(chat.state.draft.value(), "sure thing", "the draft is kept");
         assert!(
             chat.state.reply_to.is_some(),
             "the reply target must survive a refused send"
@@ -2515,12 +2609,12 @@ mod tests {
             state.compose_push(c);
         }
         state.complete_mention();
-        assert_eq!(state.open[&key].state.draft, "hey @ChatPerson ");
+        assert_eq!(state.open[&key].state.draft.value(), "hey @ChatPerson ");
 
         // No @word at the caret: completion must not touch the draft.
         state.compose_push('!');
         state.complete_mention();
-        assert_eq!(state.open[&key].state.draft, "hey @ChatPerson !");
+        assert_eq!(state.open[&key].state.draft.value(), "hey @ChatPerson !");
     }
 
     /// The display toggles cycle through every mode and back.

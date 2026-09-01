@@ -126,9 +126,29 @@ pub struct ChatState {
     /// The connection state shown in the pane header, with a human-readable
     /// detail line ("out of API quota until 09:00", …).
     pub connection: (ConnectionStatus, String),
-    /// The composer's in-progress text, kept per chat so switching tabs does
-    /// not lose a half-typed message.
-    pub draft: String,
+    /// The composer's in-progress text and caret, kept per chat so switching
+    /// tabs does not lose a half-typed message.
+    ///
+    /// A full [`TextInput`] rather than a bare `String`, so the message box
+    /// has the same editing keys as the metadata form: arrows, Home/End,
+    /// Ctrl+W and Ctrl+U. It used to support exactly two operations — append
+    /// a grapheme, and delete the last one — which meant fixing a typo six
+    /// words back required backspacing over everything after it, in the one
+    /// text box the user spends a whole stream in.
+    pub draft: crate::ui::input::TextInput,
+    /// What has been sent in this chat, newest last, for Up/Down recall.
+    ///
+    /// Bounded, because it is one more thing that would otherwise grow for
+    /// the length of a stream. Kept per chat like the draft, so recalling in
+    /// one channel never offers what was said in another.
+    pub sent: std::collections::VecDeque<String>,
+    /// How far back through `sent` the composer is currently looking.
+    ///
+    /// `None` means "on the live draft". Recalling stashes the live draft in
+    /// `stashed_draft` so that walking up the history and back down returns
+    /// what was actually being typed, rather than an empty box.
+    pub recall: Option<usize>,
+    stashed_draft: String,
     /// The message being replied to: (platform message id, author display
     /// name). Twitch threads by id; YouTube prefixes `@Name ` in the UI.
     pub reply_to: Option<(String, String)>,
@@ -146,6 +166,12 @@ pub struct ChatState {
     viewed: bool,
 }
 
+/// How many sent messages each chat remembers for Up/Down recall.
+///
+/// Enough to reach back through a conversation, small enough that it is not a
+/// second copy of the scrollback.
+const SENT_HISTORY: usize = 50;
+
 impl ChatState {
     pub fn new(config: &ChatConfig) -> Self {
         Self {
@@ -153,7 +179,10 @@ impl ChatState {
             unread: 0,
             scroll: 0,
             connection: (ConnectionStatus::Connecting, String::new()),
-            draft: String::new(),
+            draft: crate::ui::input::TextInput::default(),
+            sent: std::collections::VecDeque::new(),
+            recall: None,
+            stashed_draft: String::new(),
             reply_to: None,
             cursor: None,
             filters: Filters::default(),
@@ -172,6 +201,63 @@ impl ChatState {
     /// The chat left the screen: new messages count as unread again.
     pub fn mark_hidden(&mut self) {
         self.viewed = false;
+    }
+
+    /// Remember a message that has just been sent, for Up/Down recall.
+    ///
+    /// A repeat of the newest entry is not stored twice — sending the same
+    /// thing again is common (a link, a "welcome") and would otherwise fill
+    /// the history with duplicates you have to walk past.
+    pub fn remember_sent(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.recall = None;
+        if self.sent.back().map(String::as_str) == Some(text) {
+            return;
+        }
+        self.sent.push_back(text.to_string());
+        while self.sent.len() > SENT_HISTORY {
+            self.sent.pop_front();
+        }
+    }
+
+    /// Step through the send history. `back` is Up (older), otherwise Down.
+    ///
+    /// Returns what the composer should now hold, or `None` when there is
+    /// nowhere further to go — at which point the key should do nothing
+    /// rather than clearing what was typed.
+    pub fn recall_sent(&mut self, back: bool) -> Option<String> {
+        if self.sent.is_empty() {
+            return None;
+        }
+        let newest = self.sent.len() - 1;
+        match (self.recall, back) {
+            // Stepping off the live draft into the history: stash the draft
+            // first, so coming back down returns it rather than nothing.
+            (None, true) => {
+                self.stashed_draft = self.draft.value().to_string();
+                self.recall = Some(newest);
+                self.sent.get(newest).cloned()
+            }
+            // Already at the oldest entry: stop there.
+            (Some(0), true) => None,
+            (Some(index), true) => {
+                self.recall = Some(index - 1);
+                self.sent.get(index - 1).cloned()
+            }
+            // Down from the newest entry returns to the stashed live draft.
+            (Some(index), false) if index == newest => {
+                self.recall = None;
+                Some(std::mem::take(&mut self.stashed_draft))
+            }
+            (Some(index), false) => {
+                self.recall = Some(index + 1);
+                self.sent.get(index + 1).cloned()
+            }
+            // Down while already on the live draft: nothing to do.
+            (None, false) => None,
+        }
     }
 
     /// Applies one event from the chat task to this state.
@@ -392,6 +478,52 @@ mod tests {
         assert!(
             state.messages.get(0).unwrap().deleted,
             "the banned author's messages must be tombstoned"
+        );
+    }
+
+    #[test]
+    fn the_send_history_walks_back_and_returns_the_live_draft() {
+        let mut state = ChatState::new(&config(100));
+        state.remember_sent("first");
+        state.remember_sent("second");
+        state.draft.set("half-typed");
+
+        assert_eq!(state.recall_sent(true).as_deref(), Some("second"));
+        assert_eq!(state.recall_sent(true).as_deref(), Some("first"));
+        assert_eq!(
+            state.recall_sent(true),
+            None,
+            "the oldest entry is the end of the road, not a wrap-around"
+        );
+
+        assert_eq!(state.recall_sent(false).as_deref(), Some("second"));
+        assert_eq!(
+            state.recall_sent(false).as_deref(),
+            Some("half-typed"),
+            "coming back down must return what was being typed"
+        );
+        assert_eq!(state.recall_sent(false), None);
+    }
+
+    #[test]
+    fn sending_the_same_thing_twice_stores_it_once() {
+        let mut state = ChatState::new(&config(100));
+        state.remember_sent("welcome!");
+        state.remember_sent("welcome!");
+        assert_eq!(state.sent.len(), 1, "a repeat must not be walked past twice");
+    }
+
+    #[test]
+    fn the_send_history_is_bounded() {
+        let mut state = ChatState::new(&config(100));
+        for i in 0..(SENT_HISTORY + 20) {
+            state.remember_sent(&format!("message {i}"));
+        }
+        assert_eq!(state.sent.len(), SENT_HISTORY);
+        assert_eq!(
+            state.sent.back().map(String::as_str),
+            Some(format!("message {}", SENT_HISTORY + 19).as_str()),
+            "the newest is kept and the oldest dropped"
         );
     }
 

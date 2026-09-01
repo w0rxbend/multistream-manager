@@ -2379,7 +2379,7 @@ impl App {
     /// compose · space,c join a channel · space,x close the chat · ctrl+r
     /// reconnect · q quit. Compose/join modes capture typing until esc.
     fn key_chat(&mut self, key: KeyEvent) -> Vec<Command> {
-        use super::chat_tab::{ChatFocus, EMOJI_CHOICES};
+        use super::chat_tab::{ChatFocus, ComposeEdit, EMOJI_CHOICES};
 
         // Modal input first: while composing or joining, printable keys are
         // text, never commands (so typing a channel called "x" cannot close
@@ -2389,7 +2389,32 @@ impl App {
                 match key.code {
                     KeyCode::Esc => self.chat.mode = ChatFocus::Normal,
                     KeyCode::Enter => self.chat.compose_send(),
-                    KeyCode::Backspace => self.chat.compose_backspace(),
+                    // The ordinary editing keys, the same ones the metadata
+                    // form's fields have always had. The composer used to
+                    // support appending a character and deleting the last
+                    // one, and nothing else — so fixing a typo six words back
+                    // meant backspacing over everything after it, in the one
+                    // text box somebody sits in for a whole stream.
+                    KeyCode::Backspace => self.chat.compose_edit(ComposeEdit::Backspace),
+                    KeyCode::Delete => self.chat.compose_edit(ComposeEdit::Delete),
+                    KeyCode::Left => self.chat.compose_edit(ComposeEdit::Left),
+                    KeyCode::Right => self.chat.compose_edit(ComposeEdit::Right),
+                    KeyCode::Home => self.chat.compose_edit(ComposeEdit::Home),
+                    KeyCode::End => self.chat.compose_edit(ComposeEdit::End),
+                    // Up/Down walk what has already been sent in this chat.
+                    // The composer is one line, so there is no other meaning
+                    // for them here, and every other chat client does this.
+                    KeyCode::Up => self.chat.compose_recall(true),
+                    KeyCode::Down => self.chat.compose_recall(false),
+                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.chat.compose_edit(ComposeEdit::DeleteWord)
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.chat.compose_edit(ComposeEdit::Clear)
+                    }
+                    // No Ctrl+A / Ctrl+E readline aliases here: Ctrl+E already
+                    // opens the emoji picker in this mode, and Home/End do the
+                    // job without taking a documented key away.
                     // Tab completes a trailing @mention from the roster.
                     KeyCode::Tab => self.chat.complete_mention(),
                     KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
