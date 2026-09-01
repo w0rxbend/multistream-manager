@@ -1272,13 +1272,16 @@ fn normalize_item(item: &WireMessage, historical: bool, seen: &DedupeRing) -> No
             } else {
                 None
             };
-            let login = if details.banned_user_details.display_name.trim().is_empty() {
-                details.banned_user_details.channel_id.clone()
-            } else {
-                details.banned_user_details.display_name.clone()
-            };
+            // The channel id, always — never the display name. This value is
+            // an identifier that `ChatState::apply` matches against stored
+            // messages, and a YouTube message carries the channel id as its
+            // author id and an empty login (`base_message`). Sending the
+            // display name here matched nothing at all, so a ban arriving
+            // from YouTube tombstoned none of the banned person's messages
+            // and their history stayed on screen as though nothing had
+            // happened.
             out.events.push(ChatEvent::UserPurged {
-                author_login: login,
+                author_login: details.banned_user_details.channel_id.clone(),
                 timeout_secs: timeout,
             });
         }
@@ -2737,10 +2740,13 @@ mod tests {
         );
         let out = normalize_item(&timeout, false, &empty_ring());
         assert!(out.messages.is_empty(), "a ban must not produce a chat row");
+        // The channel id, not "Troll": this identifier is matched against the
+        // author id of stored messages, and YouTube messages carry the channel
+        // id there. Emitting the display name tombstoned nothing.
         assert!(matches!(
             &out.events[0],
             ChatEvent::UserPurged { author_login, timeout_secs: Some(300) }
-                if author_login == "Troll"
+                if author_login == "UCf"
         ));
 
         let permanent = wire(

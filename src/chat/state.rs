@@ -179,6 +179,15 @@ impl ChatState {
         match event {
             ChatEvent::Message(msg) => self.apply_message(*msg),
             ChatEvent::MessageDeleted { message_id } => {
+                // An empty id matches nothing worth matching, and would match
+                // too much: locally generated notice rows carry no id at all,
+                // so an empty match tombstones every one of them. YouTube can
+                // produce this from a deletion event whose details block is
+                // missing the target id. Same reasoning as the guard in
+                // `UserPurged` below.
+                if message_id.is_empty() {
+                    return;
+                }
                 // Mark, never remove: the renderer substitutes the body and
                 // the original text stays off screen forever.
                 for existing in self.messages.iter_mut() {
@@ -343,6 +352,47 @@ mod tests {
         });
         deliver(&mut state, msg("abc", "me", "oops"));
         assert!(state.messages.get(0).unwrap().deleted);
+    }
+
+    /// Local notice rows — "reconnected", "you were rate limited" — carry no
+    /// id, so a deletion with an empty target used to tombstone every one of
+    /// them at once. YouTube produces exactly that when a deletion event
+    /// arrives without its details block.
+    #[test]
+    fn a_deletion_with_no_target_tombstones_nothing() {
+        let mut state = ChatState::new(&config(100));
+        deliver(&mut state, msg("", "", "reconnected"));
+        deliver(&mut state, msg("1", "alice", "one"));
+
+        state.apply(ChatEvent::MessageDeleted {
+            message_id: String::new(),
+        });
+
+        assert!(
+            state.messages.iter().all(|m| !m.deleted),
+            "an empty deletion target must not match the id-less notice rows"
+        );
+    }
+
+    /// YouTube messages carry the channel id as the author id and leave the
+    /// login empty, so a purge keyed on the channel id has to match through
+    /// the id half of the comparison.
+    #[test]
+    fn a_purge_matches_a_youtube_author_by_channel_id() {
+        let mut state = ChatState::new(&config(100));
+        let mut from_youtube = msg("m1", "", "hello");
+        from_youtube.author.id = "UCtroll".into();
+        deliver(&mut state, from_youtube);
+
+        state.apply(ChatEvent::UserPurged {
+            author_login: "UCtroll".into(),
+            timeout_secs: None,
+        });
+
+        assert!(
+            state.messages.get(0).unwrap().deleted,
+            "the banned author's messages must be tombstoned"
+        );
     }
 
     #[test]
