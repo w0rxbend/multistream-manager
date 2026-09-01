@@ -157,7 +157,6 @@ pub fn stop_stream() -> Request {
     request("StopStream")
 }
 
-
 /// Save whatever the replay buffer is holding.
 ///
 /// The replay buffer keeps the last N seconds in memory; saving it writes

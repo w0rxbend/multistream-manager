@@ -526,7 +526,9 @@ impl StreamPlan {
         for tag in &self.tags {
             let cleaned: String = tag.chars().filter(|c| c.is_alphanumeric()).collect();
             if cleaned.is_empty() {
-                notes.push(format!("{tag:?} has nothing Twitch accepts in it and is dropped"));
+                notes.push(format!(
+                    "{tag:?} has nothing Twitch accepts in it and is dropped"
+                ));
                 continue;
             }
             if cleaned.chars().count() > limits::TWITCH_TAG_LEN {

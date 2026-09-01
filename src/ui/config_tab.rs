@@ -57,9 +57,7 @@ impl Section {
                 " j/k move   tab pane   +/- panel   </> row   J/K reorder   r rotate",
                 "   a add   d remove   p preset   u undo   s save   esc back   q quit"
             ),
-            Section::Appearance => {
-                " j/k move   tab pane   enter change   esc back   q quit"
-            }
+            Section::Appearance => " j/k move   tab pane   enter change   esc back   q quit",
             Section::Notifications | Section::Chat => {
                 " j/k move   tab pane   enter toggle   esc back   q quit"
             }
@@ -67,9 +65,7 @@ impl Section {
                 " j/k move   tab pane   enter log in/out   a add a chat account",
                 "   d forget an extra account   esc back   q quit"
             ),
-            Section::Maintenance => {
-                " j/k move   tab pane   enter run   esc back   q quit"
-            }
+            Section::Maintenance => " j/k move   tab pane   enter run   esc back   q quit",
             Section::Diagnostics => {
                 " j/k move   tab pane   r re-run the checks   esc back   q quit"
             }
@@ -266,7 +262,10 @@ impl ConfigTab {
             Section::Obs => 0,
             // Every account the store holds, not one row per platform: the
             // extra chat accounts were invisible and unremovable.
-            Section::Accounts => app.all_accounts().len().max(crate::model::Platform::ALL.len()),
+            Section::Accounts => app
+                .all_accounts()
+                .len()
+                .max(crate::model::Platform::ALL.len()),
             // The three jobs, plus a row per stream id the last listing
             // found, so one can be pinned without a text editor.
             Section::Maintenance => MAINTENANCE_ROWS + app.youtube_streams.len(),
@@ -607,7 +606,10 @@ fn draw_appearance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab)
         // Named for what it is, because the Notifications section next door
         // is about the *desktop's* pop-ups and confusing the two would send
         // somebody to the wrong switch.
-        ("Routine pop-ups (problems always show)", on_off(appearance.toasts)),
+        (
+            "Routine pop-ups (problems always show)",
+            on_off(appearance.toasts),
+        ),
         (
             "Terminal background",
             on_off(appearance.terminal_background),
@@ -784,7 +786,10 @@ fn draw_chat(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("  Scrollback kept per chat: {} messages", chat.scrollback_limit),
+        format!(
+            "  Scrollback kept per chat: {} messages",
+            chat.scrollback_limit
+        ),
         Style::new().fg(sk.muted),
     )));
 
@@ -909,7 +914,10 @@ fn draw_keys(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
         }
         if app.key_problems.len() > 4 {
             lines.push(Line::from(Span::styled(
-                format!("  …and {} more, in the activity log.", app.key_problems.len() - 4),
+                format!(
+                    "  …and {} more, in the activity log.",
+                    app.key_problems.len() - 4
+                ),
                 Style::new().fg(sk.muted),
             )));
         }

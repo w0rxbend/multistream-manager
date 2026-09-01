@@ -627,10 +627,7 @@ mod tests {
         assert_eq!(off.kind, EventKind::StreamState);
         // The wording matters: this is the encoder-died case, and it reads
         // very differently from "you ended your stream".
-        assert!(
-            off.detail.contains("no longer receiving"),
-            "{off:?}"
-        );
+        assert!(off.detail.contains("no longer receiving"), "{off:?}");
     }
 
     /// Both need no scope at all, which is why they can simply be added.

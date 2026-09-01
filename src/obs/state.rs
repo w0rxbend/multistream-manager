@@ -122,7 +122,9 @@ pub enum Connection {
     /// sends and nothing ever displayed it — the pane said "reconnecting" and
     /// the user was left to guess whether the password was wrong or OBS was
     /// simply not running.
-    Reconnecting { reason: Option<String> },
+    Reconnecting {
+        reason: Option<String>,
+    },
     /// Something went wrong that retrying will not fix — a wrong password,
     /// most often. The reason is kept so it can be shown rather than logged
     /// and forgotten.

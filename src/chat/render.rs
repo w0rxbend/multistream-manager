@@ -789,9 +789,7 @@ fn mark_mention(rows: &mut [Line<'static>], opts: &RenderOpts) {
             0,
             Span::styled(
                 "▏".to_string(),
-                Style::new()
-                    .fg(accent_color())
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(accent_color()).add_modifier(Modifier::BOLD),
             ),
         );
     }
@@ -852,7 +850,9 @@ fn reply_row(msg: &ChatMessage, width: usize, indent: usize) -> Option<Line<'sta
     }
     Some(Line::from(Span::styled(
         truncate_to_width(&text, width),
-        Style::new().fg(muted_color()).add_modifier(Modifier::ITALIC),
+        Style::new()
+            .fg(muted_color())
+            .add_modifier(Modifier::ITALIC),
     )))
 }
 

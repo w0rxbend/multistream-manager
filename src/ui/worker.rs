@@ -496,11 +496,10 @@ pub async fn run(
 
             Command::ForgetAccount { key, label } => {
                 let removing = key.clone();
-                let outcome =
-                    crate::auth::mutate_store(move |store| {
-                        store.remove_keyed(&removing);
-                    })
-                    .await;
+                let outcome = crate::auth::mutate_store(move |store| {
+                    store.remove_keyed(&removing);
+                })
+                .await;
                 let _ = events.send(match outcome {
                     Ok(()) => Event::Log {
                         level: LogLevel::Success,

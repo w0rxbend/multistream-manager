@@ -225,7 +225,9 @@ pub async fn run(config: Config) -> Result<()> {
     // the same file, would overwrite each other's count.
     let ledger = crate::quota::QuotaStore::new(
         config.chat.daily_quota_units,
-        crate::paths::config_dir().ok().map(|dir| dir.join("quota.json")),
+        crate::paths::config_dir()
+            .ok()
+            .map(|dir| dir.join("quota.json")),
     );
 
     let worker = tokio::spawn(worker::run(

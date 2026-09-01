@@ -10,9 +10,9 @@
 //! has to be looked up first. That lookup is also what powers the autocomplete
 //! in the form.
 
-use std::collections::VecDeque;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::backend::{Backend, BoxFuture, AUDIENCE_REFRESH};

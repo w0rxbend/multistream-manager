@@ -632,12 +632,7 @@ fn matches_for(rows: &[Row], query: &str) -> Vec<usize> {
 /// The bottom, not the middle: what you were looking at when you opened it is
 /// usually what you want the command to act on, so covering the top half would
 /// hide the thing you are about to change.
-pub fn draw(
-    frame: &mut Frame,
-    area: Rect,
-    palette: &CommandPalette,
-    chat_open: bool,
-) {
+pub fn draw(frame: &mut Frame, area: Rect, palette: &CommandPalette, chat_open: bool) {
     let sk = theme::skin();
     let matches = palette.matches();
 
@@ -947,7 +942,11 @@ mod tests {
     #[test]
     fn no_two_rows_share_a_title() {
         let palette = palette();
-        let mut titles: Vec<&str> = palette.rows().iter().map(|row| row.title.as_str()).collect();
+        let mut titles: Vec<&str> = palette
+            .rows()
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect();
         titles.sort_unstable();
         let count = titles.len();
         titles.dedup();

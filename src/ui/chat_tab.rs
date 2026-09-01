@@ -2552,7 +2552,11 @@ mod tests {
         }
         state.compose_edit(ComposeEdit::Backspace);
         let key = state.active_key(Platform::Twitch).unwrap().clone();
-        assert_eq!(state.open[&key].state.draft.value(), "hi ", "one grapheme removed");
+        assert_eq!(
+            state.open[&key].state.draft.value(),
+            "hi ",
+            "one grapheme removed"
+        );
 
         state.handle_event(
             key.clone(),

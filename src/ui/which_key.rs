@@ -489,10 +489,7 @@ pub fn draw_all(frame: &mut Frame, area: Rect, keymap: &Keymap, context: Context
     let total = lines.len();
     let offset = usize::from(scroll).min(total.saturating_sub(height));
 
-    frame.render_widget(
-        Paragraph::new(lines).scroll((offset as u16, 0)),
-        rows[0],
-    );
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), rows[0]);
 
     let footer = if total > height {
         format!(

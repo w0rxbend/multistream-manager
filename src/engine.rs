@@ -15,9 +15,7 @@ use std::collections::HashMap;
 use crate::auth;
 use crate::backend::{Backend, PlatformResult};
 use crate::config::Config;
-use crate::model::{
-    Category, EndOutcome, IngestEndpoint, Platform, PlatformStats, StreamPlan,
-};
+use crate::model::{Category, EndOutcome, IngestEndpoint, Platform, PlatformStats, StreamPlan};
 use crate::twitch::TwitchBackend;
 use crate::youtube::YouTubeBackend;
 
@@ -623,8 +621,8 @@ mod tests {
             &Platform::ALL,
             crate::quota::QuotaStore::new(0, None),
         )
-            .await
-            .expect("only a global failure may abort the build");
+        .await
+        .expect("only a global failure may abort the build");
 
         assert!(engine.platforms().is_empty());
         assert_eq!(failures.len(), 2, "one failure per platform: {failures:?}");

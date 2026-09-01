@@ -235,7 +235,9 @@ mod tests {
             rules: vec![rule(Match::Word, "cat")],
         };
         assert!(highlights.check(&message("look at my cat")).is_some());
-        assert!(highlights.check(&message("what category is this")).is_none());
+        assert!(highlights
+            .check(&message("what category is this"))
+            .is_none());
         // Punctuation is a boundary.
         assert!(highlights.check(&message("a cat, obviously")).is_some());
     }
@@ -334,7 +336,9 @@ mod tests {
                 rule(Match::Phrase, "a"),
             ],
         };
-        let hit = highlights.check(&message("a raid is coming")).expect("a hit");
+        let hit = highlights
+            .check(&message("a raid is coming"))
+            .expect("a hit");
         assert_eq!(hit.index, 0);
         assert!(hit.notify);
     }

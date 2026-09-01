@@ -2021,7 +2021,9 @@ mod tests {
         let (_, problems) = keys.keymap();
 
         assert!(
-            problems.iter().any(|problem| problem.contains("unreachable")),
+            problems
+                .iter()
+                .any(|problem| problem.contains("unreachable")),
             "expected a complaint, got {problems:?}"
         );
     }

@@ -313,15 +313,16 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut line = String::new();
     let mut used = 0usize;
 
-    let push_cluster = |cluster: &str, line: &mut String, used: &mut usize, out: &mut Vec<String>| {
-        let cell = cluster.width();
-        if *used + cell > width && !line.is_empty() {
-            out.push(std::mem::take(line));
-            *used = 0;
-        }
-        line.push_str(cluster);
-        *used += cell;
-    };
+    let push_cluster =
+        |cluster: &str, line: &mut String, used: &mut usize, out: &mut Vec<String>| {
+            let cell = cluster.width();
+            if *used + cell > width && !line.is_empty() {
+                out.push(std::mem::take(line));
+                *used = 0;
+            }
+            line.push_str(cluster);
+            *used += cell;
+        };
 
     for word in text.split_inclusive(' ') {
         let word_width = word.width();

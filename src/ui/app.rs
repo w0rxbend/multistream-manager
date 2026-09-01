@@ -1023,7 +1023,10 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::CommandPalette => {
-                self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap, self.key_context()));
+                self.command_palette = Some(super::command_palette::CommandPalette::open(
+                    &self.keymap,
+                    self.key_context(),
+                ));
             }
             Action::MessageHistory => {
                 self.toasts.dismiss_all();
@@ -1337,9 +1340,7 @@ impl App {
                     | Section::Chat
                     | Section::Paths
             ),
-            Action::ConfigAddAccount | Action::ConfigForgetAccount => {
-                section == Section::Accounts
-            }
+            Action::ConfigAddAccount | Action::ConfigForgetAccount => section == Section::Accounts,
             Action::ConfigRefreshChecks => section == Section::Diagnostics,
             _ => false,
         }
@@ -1390,8 +1391,7 @@ impl App {
             Focus::Contents => {
                 if rows > 0 {
                     let count = rows as isize;
-                    config.cursor =
-                        ((config.cursor as isize + delta).rem_euclid(count)) as usize;
+                    config.cursor = ((config.cursor as isize + delta).rem_euclid(count)) as usize;
                 }
             }
         }
@@ -1510,9 +1510,10 @@ impl App {
         // keymap consume those first would break the editor. So a binding
         // applies only where it means something, and anything else falls
         // through to the local keys below.
-        if let Some(action) = self.keymap.action(crate::keys::Context::Config, &[
-            crate::keys::Key::from_event(key),
-        ]) {
+        if let Some(action) = self.keymap.action(
+            crate::keys::Context::Config,
+            &[crate::keys::Key::from_event(key)],
+        ) {
             if Self::config_action_applies(action, config.section) {
                 self.config_tab = Some(config);
                 return self.run_action(action);
@@ -1957,10 +1958,7 @@ impl App {
         } else {
             "off — what is already recorded is kept"
         };
-        self.notify(
-            super::toast::Level::Info,
-            format!("Chat logging: {state}"),
-        );
+        self.notify(super::toast::Level::Info, format!("Chat logging: {state}"));
         // The chat tab holds the live logger, so the switch has to reach it
         // as well as the file: turning it on opens a log now rather than at
         // the next start-up.
@@ -2434,8 +2432,9 @@ impl App {
                         if previously_connected {
                             // Say why, when the attempt had something to say.
                             match reason {
-                                Some(reason) => self
-                                    .push_log(LogLevel::Warning, format!("OBS: {reason}")),
+                                Some(reason) => {
+                                    self.push_log(LogLevel::Warning, format!("OBS: {reason}"))
+                                }
                                 None => self.push_log(LogLevel::Warning, "OBS disconnected."),
                             }
                             self.obs.clear_live_data();
@@ -2720,10 +2719,7 @@ impl App {
     pub fn account_summary_for(&self, key: &str) -> Option<(String, bool)> {
         let store = crate::auth::store::TokenStore::load().ok()?;
         let tokens = store.get_keyed(key)?;
-        Some((
-            tokens.expires_in_human(),
-            tokens.refresh_token.is_some(),
-        ))
+        Some((tokens.expires_in_human(), tokens.refresh_token.is_some()))
     }
 
     /// Take the diagnostics again, if that pane is what is on screen.
@@ -3147,7 +3143,10 @@ impl App {
             return self.key_command_palette(key);
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p')) {
-            self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap, self.key_context()));
+            self.command_palette = Some(super::command_palette::CommandPalette::open(
+                &self.keymap,
+                self.key_context(),
+            ));
             return vec![];
         }
 
@@ -4651,10 +4650,7 @@ impl App {
                 .find(|check| check.severity == crate::preflight::Severity::Blocking)
                 .map(|check| check.summary.clone())
                 .unwrap_or_default();
-            self.notify(
-                super::toast::Level::Warning,
-                format!("Not ready: {first}"),
-            );
+            self.notify(super::toast::Level::Warning, format!("Not ready: {first}"));
             return vec![];
         }
 

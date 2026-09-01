@@ -75,7 +75,10 @@ pub fn draw_status_lines(frame: &mut Frame, area: Rect, obs: &ObsState) {
         } else {
             sk.warning
         };
-        first.push(Span::styled(format!("  ·  {reason}"), Style::new().fg(colour)));
+        first.push(Span::styled(
+            format!("  ·  {reason}"),
+            Style::new().fg(colour),
+        ));
     }
 
     // The live indicators. Streaming and recording are separate on purpose:

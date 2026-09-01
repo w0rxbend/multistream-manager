@@ -162,7 +162,10 @@ fn platform_checks(inputs: &Inputs) -> Vec<Check> {
             .is_some_and(|at| (at - chrono::Utc::now()).num_minutes() < TOKEN_HEADROOM_MINUTES);
         if expiring && tokens.refresh_token.is_none() {
             checks.push(Check::blocking(
-                format!("{label}: the login expires in {}", tokens.expires_in_human()),
+                format!(
+                    "{label}: the login expires in {}",
+                    tokens.expires_in_human()
+                ),
                 "There is no refresh token, so it cannot renew itself. Log in again under \
                  Config → Accounts."
                     .to_string(),
@@ -187,7 +190,10 @@ fn platform_checks(inputs: &Inputs) -> Vec<Check> {
         };
         if !missing.is_empty() {
             checks.push(Check::warning(
-                format!("{label}: this login predates {} permission(s)", missing.len()),
+                format!(
+                    "{label}: this login predates {} permission(s)",
+                    missing.len()
+                ),
                 format!(
                     "Missing: {}. Streaming still works; log in again to enable the rest.",
                     missing.join(", ")

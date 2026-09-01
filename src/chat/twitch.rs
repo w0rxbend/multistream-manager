@@ -1019,7 +1019,9 @@ async fn run_marker(
     let token = match tokens().await {
         Ok(token) => token,
         Err(err) => {
-            notice(format!("could not get a Twitch token for the marker: {err:#}"));
+            notice(format!(
+                "could not get a Twitch token for the marker: {err:#}"
+            ));
             return;
         }
     };

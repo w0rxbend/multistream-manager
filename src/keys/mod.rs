@@ -700,7 +700,8 @@ mod tests {
         let map = map();
 
         assert_eq!(
-            map.binding_in(Action::ChatScrollDown, Context::Chat).as_deref(),
+            map.binding_in(Action::ChatScrollDown, Context::Chat)
+                .as_deref(),
             Some("j")
         );
         assert_eq!(

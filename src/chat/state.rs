@@ -560,7 +560,11 @@ mod tests {
         let mut state = ChatState::new(&config(100));
         state.remember_sent("welcome!");
         state.remember_sent("welcome!");
-        assert_eq!(state.sent.len(), 1, "a repeat must not be walked past twice");
+        assert_eq!(
+            state.sent.len(),
+            1,
+            "a repeat must not be walked past twice"
+        );
     }
 
     #[test]

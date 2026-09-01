@@ -191,10 +191,7 @@ fn draw_preflight(frame: &mut Frame, area: Rect, checks: &[crate::preflight::Che
             )));
         }
     }
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        rows[0],
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
 
     let hint = match worst {
         Severity::Blocking => "Fix the ✖ rows first · r re-check · esc go back",
@@ -1062,7 +1059,9 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App) {
         .title(title);
 
     frame.render_widget(
-        Paragraph::new(lines).block(block).scroll((offset as u16, 0)),
+        Paragraph::new(lines)
+            .block(block)
+            .scroll((offset as u16, 0)),
         areas[0],
     );
 

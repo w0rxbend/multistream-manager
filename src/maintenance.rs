@@ -78,7 +78,7 @@ async fn youtube_engine(
     let (mut engine, mut failures) =
         crate::engine::Engine::build(config, &[Platform::YouTube], ledger)
             .await
-        .context("preparing the YouTube connection")?;
+            .context("preparing the YouTube connection")?;
     if let Some((_, reason)) = failures.pop() {
         anyhow::bail!("{reason}");
     }

@@ -191,9 +191,7 @@ pub fn run(config: &Config) -> Vec<Check> {
                     // exact thing that is wrong. The refresh token is what
                     // decides whether it matters.
                     let expired = tokens.is_some_and(|tokens| {
-                        tokens
-                            .expires_at
-                            .is_some_and(|at| at <= chrono::Utc::now())
+                        tokens.expires_at.is_some_and(|at| at <= chrono::Utc::now())
                     });
                     let renewable = tokens.is_some_and(|tokens| tokens.refresh_token.is_some());
                     checks.push(match (expired, renewable) {

@@ -27,13 +27,13 @@ use tokio::sync::mpsc;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::chat::jitter::Lcg;
-use crate::quota::{cost, QuotaStore};
 use crate::chat::ratelimit::{SendDenied, TokenBucket};
 use crate::chat::source::{ChatCommand, ChatHandle, EventSender, TokenProvider, COMMAND_QUEUE};
 use crate::chat::{
     Badge, ChatAuthor, ChatEvent, ChatKey, ChatMessage, ConnectionStatus, MembershipDetails,
     MembershipKind, MessageKind, PaidAmount, PlatformMeta, YouTubeMeta,
 };
+use crate::quota::{cost, QuotaStore};
 
 /// The real Data API base. Tests override it with a local fake server.
 const API: &str = "https://www.googleapis.com/youtube/v3";
@@ -2703,7 +2703,6 @@ mod tests {
         assert!(ring.insert(""));
         assert!(!ring.has(""));
     }
-
 
     // -- moderation before the chat resolves ---------------------------------
 

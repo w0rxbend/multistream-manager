@@ -1585,8 +1585,13 @@ mod tests {
     #[tokio::test]
     async fn listing_streams_follows_page_tokens_to_the_end() {
         let (base, seen) = fake_data_api().await;
-        let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
+        let mut backend = YouTubeBackend::new(
+            reqwest::Client::new(),
+            "token".into(),
+            true,
+            String::new(),
+            crate::quota::QuotaStore::new(0, None),
+        );
         backend.base = base;
 
         let streams = backend.list_streams().await.expect("the fake API answers");
@@ -1645,8 +1650,13 @@ mod tests {
     }
 
     async fn backend_with(base: String, broadcast: Option<&str>) -> YouTubeBackend {
-        let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
+        let mut backend = YouTubeBackend::new(
+            reqwest::Client::new(),
+            "token".into(),
+            true,
+            String::new(),
+            crate::quota::QuotaStore::new(0, None),
+        );
         backend.base = base;
         backend.broadcast_id = broadcast.map(|id| id.to_string());
         backend
@@ -2192,8 +2202,13 @@ mod tests {
     #[tokio::test]
     async fn a_quota_error_still_escalates_when_another_call_in_the_same_poll_succeeded() {
         let base = fake_api_with_exhausted_channel_quota().await;
-        let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), false, String::new(), crate::quota::QuotaStore::new(0, None));
+        let mut backend = YouTubeBackend::new(
+            reqwest::Client::new(),
+            "token".into(),
+            false,
+            String::new(),
+            crate::quota::QuotaStore::new(0, None),
+        );
         backend.base = base;
         backend.broadcast_id = Some("abc".into());
 
@@ -2285,8 +2300,13 @@ mod tests {
             }
         });
 
-        let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
+        let mut backend = YouTubeBackend::new(
+            reqwest::Client::new(),
+            "token".into(),
+            true,
+            String::new(),
+            crate::quota::QuotaStore::new(0, None),
+        );
         backend.base = base;
 
         let err = backend

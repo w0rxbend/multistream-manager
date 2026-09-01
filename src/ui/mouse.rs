@@ -156,7 +156,6 @@ pub fn target_at(
 
     let mut chat_area = layout.body;
     if combined {
-
         let stream_info = Rect {
             height: STREAM_INFO_HEIGHT.min(chat_area.height),
             ..chat_area
