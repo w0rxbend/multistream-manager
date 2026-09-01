@@ -418,9 +418,22 @@ pub const ENTRIES: &[Entry] = &[
 #[derive(Debug, Clone)]
 pub struct Row {
     pub title: String,
+    /// The keys to replay, when the action has a binding that would fire
+    /// where the palette was opened.
     pub keys: Vec<KeyEvent>,
-    /// The key as it is written on screen. Empty when the action is unbound,
-    /// which is the case the palette exists for.
+    /// The action itself, for a row with no such binding.
+    ///
+    /// Replaying keys is the palette's rule — it is what stops an entry
+    /// drifting away from what the key does — but a chord bound in another
+    /// context is re-resolved where the user is standing and runs whatever
+    /// lives on those keys *there*. A bare `j` is `chat.scroll_down`,
+    /// `obs.down` and `config.next_section`, so choosing "Scroll forward"
+    /// from the OBS tab moved the scene cursor. When there is no honest chord
+    /// to replay, the action is run directly instead — through `run_action`,
+    /// which is the same single implementation the key reaches.
+    pub action: Option<crate::keys::Action>,
+    /// The key as it is written on screen. Empty when the action has no
+    /// binding here, which is the case the palette exists for.
     pub shortcut: String,
     pub keywords: String,
     pub needs_chat: bool,
@@ -428,7 +441,7 @@ pub struct Row {
 
 /// Build the full list: the hand-written sequences, then every action that is
 /// not already covered by one.
-fn build_rows(keymap: &crate::keys::Keymap) -> Vec<Row> {
+fn build_rows(keymap: &crate::keys::Keymap, context: crate::keys::Context) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     let mut covered: std::collections::HashSet<crate::keys::Action> =
         std::collections::HashSet::new();
@@ -443,12 +456,13 @@ fn build_rows(keymap: &crate::keys::Keymap) -> Vec<Row> {
             // with no action behind it replays the keys it was written with.
             keys: entry
                 .action
-                .and_then(|action| keymap.chord_for(action))
+                .and_then(|action| keymap.chord_in(action, context))
                 .map(|chord| chord.into_iter().map(|key| key.to_event()).collect())
                 .unwrap_or_else(|| entry.keys.iter().map(|key| key.event()).collect()),
+            action: entry.action,
             shortcut: entry
                 .action
-                .and_then(|action| keymap.binding_for(action))
+                .and_then(|action| keymap.binding_in(action, context))
                 .unwrap_or_else(|| entry.shortcut.to_string()),
             keywords: entry.keywords.join(" "),
             needs_chat: entry.needs_chat,
@@ -462,10 +476,11 @@ fn build_rows(keymap: &crate::keys::Keymap) -> Vec<Row> {
         rows.push(Row {
             title: action.describe().to_string(),
             keys: keymap
-                .chord_for(action)
+                .chord_in(action, context)
                 .map(|chord| chord.into_iter().map(|key| key.to_event()).collect())
                 .unwrap_or_default(),
-            shortcut: keymap.binding_for(action).unwrap_or_default(),
+            action: Some(action),
+            shortcut: keymap.binding_in(action, context).unwrap_or_default(),
             // The group and the action's own name, so searching for "obs" or
             // for the name in config.toml both find it.
             keywords: format!("{} {}", action.group(), action.name()),
@@ -493,8 +508,8 @@ pub struct CommandPalette {
 
 impl CommandPalette {
     /// Open the palette against the bindings currently in force.
-    pub fn open(keymap: &crate::keys::Keymap) -> Self {
-        let rows = build_rows(keymap);
+    pub fn open(keymap: &crate::keys::Keymap, context: crate::keys::Context) -> Self {
+        let rows = build_rows(keymap, context);
         let matching = (0..rows.len()).collect();
         Self {
             query: String::new(),
@@ -745,7 +760,7 @@ mod tests {
     use super::*;
 
     fn palette() -> CommandPalette {
-        CommandPalette::open(&crate::keys::Keymap::default())
+        CommandPalette::open(&crate::keys::Keymap::default(), crate::keys::Context::Chat)
     }
 
     #[test]
@@ -766,7 +781,7 @@ mod tests {
     #[test]
     fn every_action_appears_in_the_palette() {
         let keymap = crate::keys::Keymap::default();
-        let palette = CommandPalette::open(&keymap);
+        let palette = CommandPalette::open(&keymap, crate::keys::Context::Chat);
 
         for &action in crate::keys::Action::ALL.iter() {
             // Either a hand-written entry stands for it — those have their own
@@ -783,6 +798,44 @@ mod tests {
                 action.describe()
             );
         }
+    }
+
+    /// A row must never carry a chord that means something else where the
+    /// palette was opened. A bare `j` is `chat.scroll_down` on the Chat tab,
+    /// `obs.down` on the OBS tab and `config.next_section` on Config — so
+    /// choosing "Scroll forward" from the OBS tab used to move the scene
+    /// cursor instead.
+    #[test]
+    fn a_row_never_replays_a_key_that_means_something_else_here() {
+        let keymap = crate::keys::Keymap::default();
+        let from_obs = CommandPalette::open(&keymap, crate::keys::Context::Obs);
+
+        let row = from_obs
+            .rows()
+            .iter()
+            .find(|row| row.title == crate::keys::Action::ChatScrollDown.describe())
+            .expect("chat scrolling is in the palette");
+
+        assert!(
+            row.keys.is_empty(),
+            "no chord may be replayed for it from the OBS tab: {:?}",
+            row.shortcut
+        );
+        assert_eq!(
+            row.action,
+            Some(crate::keys::Action::ChatScrollDown),
+            "so it has to carry the action, to be run directly instead"
+        );
+
+        // …and from the Chat tab the same row does carry its key.
+        let from_chat = CommandPalette::open(&keymap, crate::keys::Context::Chat);
+        let row = from_chat
+            .rows()
+            .iter()
+            .find(|row| row.title == crate::keys::Action::ChatScrollDown.describe())
+            .expect("chat scrolling is in the palette");
+        assert_eq!(row.shortcut, "j");
+        assert!(!row.keys.is_empty());
     }
 
     /// Words in any order, which is what people actually type.
@@ -821,6 +874,7 @@ mod tests {
             Row {
                 title: "Toggle the mute on everything".into(),
                 keys: Vec::new(),
+                action: None,
                 shortcut: String::new(),
                 keywords: String::new(),
                 needs_chat: false,
@@ -828,6 +882,7 @@ mod tests {
             Row {
                 title: "Mute the selected input".into(),
                 keys: Vec::new(),
+                action: None,
                 shortcut: String::new(),
                 keywords: String::new(),
                 needs_chat: false,

@@ -169,19 +169,16 @@ impl Keymap {
     /// An action can have several bindings; this returns the one worth
     /// teaching — the fewest keys, and among those the fewest modifiers, so
     /// `q` is shown in preference to `<C-c>` and `<Leader>os`.
-    pub fn binding_for(&self, action: Action) -> Option<String> {
-        self.bindings
-            .iter()
-            .filter(|(_, bound)| **bound == action)
-            .map(|((_, chord), _)| chord)
-            .min_by_key(|chord| {
-                let modifiers: u32 = chord
-                    .iter()
-                    .map(|key| key.modifiers.bits().count_ones())
-                    .sum();
-                (chord.len(), modifiers, chord.to_vec())
-            })
-            .map(|chord| write_chord(chord, self.leader))
+    /// The key that runs `action` in `context`, written out.
+    ///
+    /// Always with a context, never without: a bare `j` is
+    /// `chat.scroll_down`, `obs.down` and `config.next_section` — three
+    /// different actions in three contexts. Answering "what key runs this"
+    /// without saying where produced a key that runs something else where the
+    /// asker is standing.
+    pub fn binding_in(&self, action: Action, context: Context) -> Option<String> {
+        self.best_chord(action, context)
+            .map(|chord| write_chord(&chord, self.leader))
     }
 
     /// The keys that run `action`, as events to replay.
@@ -190,10 +187,27 @@ impl Keymap {
     /// chord with the fewest modifiers — but as the keys themselves, so the
     /// command palette can replay whatever the action is bound to *now*
     /// rather than a default written down beside it.
-    pub fn chord_for(&self, action: Action) -> Option<Vec<Key>> {
+    /// The keys that run `action` *in `context`*, as keys to replay.
+    ///
+    /// Only bindings that would actually fire there are considered: the
+    /// context's own, and `Global`. Replaying a chord from somewhere else
+    /// would be re-resolved where the user is standing and run whatever lives
+    /// on those keys there.
+    pub fn chord_in(&self, action: Action, context: Context) -> Option<Vec<Key>> {
+        self.best_chord(action, context)
+    }
+
+    /// The shortest, least-modified chord bound to `action` that would fire
+    /// in `context`.
+    fn best_chord(&self, action: Action, context: Context) -> Option<Vec<Key>> {
         self.bindings
             .iter()
-            .filter(|(_, bound)| **bound == action)
+            .filter(|((bound_context, _), bound)| {
+                // A context's own binding or a global one — the two that
+                // `resolve_key` would find.
+                **bound == action
+                    && (*bound_context == context || *bound_context == Context::Global)
+            })
             .map(|((_, chord), _)| chord)
             .min_by_key(|chord| {
                 let modifiers: u32 = chord
@@ -607,11 +621,38 @@ mod tests {
     fn the_binding_shown_for_an_action_is_its_shortest() {
         let map = map();
         // Quit is on <C-c>, <Leader>q and q — the shortest wins.
-        assert_eq!(map.binding_for(Action::Quit).as_deref(), Some("q"));
+        assert_eq!(
+            map.binding_in(Action::Quit, Context::Chat).as_deref(),
+            Some("q")
+        );
         // The command palette is on <C-p> and <Leader>ff.
         assert_eq!(
-            map.binding_for(Action::CommandPalette).as_deref(),
+            map.binding_in(Action::CommandPalette, Context::Chat)
+                .as_deref(),
             Some("<C-p>")
+        );
+    }
+
+    /// The same key means different things in different contexts, so the key
+    /// shown for an action has to be one that would fire where it is shown.
+    /// A bare `j` is `chat.scroll_down`, `obs.down` *and*
+    /// `config.next_section`.
+    #[test]
+    fn the_binding_shown_is_one_that_would_fire_in_that_context() {
+        let map = map();
+
+        assert_eq!(
+            map.binding_in(Action::ChatScrollDown, Context::Chat).as_deref(),
+            Some("j")
+        );
+        assert_eq!(
+            map.binding_in(Action::ChatScrollDown, Context::Obs),
+            None,
+            "chat scrolling is not on any key that fires on the OBS tab"
+        );
+        assert_eq!(
+            map.binding_in(Action::ObsDown, Context::Obs).as_deref(),
+            Some("j")
         );
     }
 
@@ -623,7 +664,7 @@ mod tests {
                 map.unbind(binding.context, &binding.chord);
             }
         }
-        assert_eq!(map.binding_for(Action::ObsMuteAll), None);
+        assert_eq!(map.binding_in(Action::ObsMuteAll, Context::Obs), None);
     }
 
     /// Changing the leader has to move every binding written against it,

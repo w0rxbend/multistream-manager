@@ -967,7 +967,7 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::CommandPalette => {
-                self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap));
+                self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap, self.key_context()));
             }
             Action::MessageHistory => {
                 self.toasts.dismiss_all();
@@ -2663,7 +2663,7 @@ impl App {
             return self.key_command_palette(key);
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p')) {
-            self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap));
+            self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap, self.key_context()));
             return vec![];
         }
 
@@ -3378,13 +3378,22 @@ impl App {
                 self.command_palette = None;
             }
             KeyCode::Enter => {
-                let keys: Vec<KeyEvent> = palette
-                    .chosen()
-                    .map(|row| row.keys.clone())
-                    .unwrap_or_default();
+                let chosen = palette.chosen().map(|row| (row.keys.clone(), row.action));
                 // Close the palette *before* replaying, or the replayed key
                 // would be typed straight back into the query box.
                 self.command_palette = None;
+                let Some((keys, action)) = chosen else {
+                    return vec![];
+                };
+                if keys.is_empty() {
+                    // No binding that would fire here, so there is no honest
+                    // chord to replay — run the action itself, through the
+                    // same `run_action` a key would reach.
+                    return match action {
+                        Some(action) => self.run_action(action),
+                        None => vec![],
+                    };
+                }
                 let mut commands = Vec::new();
                 for key in keys {
                     commands.extend(self.handle_key(key));
