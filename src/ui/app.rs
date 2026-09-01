@@ -1807,6 +1807,33 @@ impl App {
         }
     }
 
+    /// Undo the optimistic state a command set before it was sent, when the
+    /// worker's queue was full and the command never left.
+    ///
+    /// The commands that matter here are the ones that set `busy` before they
+    /// are dispatched, so the interface can show a spinner and refuse a second
+    /// press. If such a command is dropped no reply will ever arrive, and
+    /// `busy` was previously left set for the rest of the session — every
+    /// later go-live, login and end-stream silently refused with "already
+    /// working" and the only cure was restarting the program.
+    pub fn on_command_dropped(&mut self, command: &Command) {
+        match command {
+            Command::GoLive { .. } => {
+                self.busy = false;
+                // The reply for this generation will never come, so step past
+                // it; a late reply from an *earlier* submission must still be
+                // discarded rather than mistaken for this one's answer.
+                self.go_generation += 1;
+            }
+            Command::Connect(_) | Command::EndLive | Command::Login(_) | Command::LoginAdd(_) => {
+                self.busy = false;
+            }
+            // Everything else is fire-and-forget from the interface's point of
+            // view: losing it costs the user a keypress, not a stuck screen.
+            _ => {}
+        }
+    }
+
     pub fn push_log(&mut self, level: LogLevel, message: impl Into<String>) {
         let message = message.into();
 
@@ -4145,6 +4172,30 @@ mod tests {
         let commands = app.submit();
         assert!(matches!(commands.as_slice(), [Command::GoLive { .. }]));
         assert!(app.busy);
+    }
+
+    #[test]
+    fn a_go_live_dropped_by_a_full_queue_does_not_leave_the_interface_stuck() {
+        let mut app = app_on_form();
+        app.selected = vec![Platform::YouTube];
+        app.inputs
+            .get_mut(&Field::Title)
+            .unwrap()
+            .set("A good title");
+
+        let commands = app.submit();
+        assert!(app.busy);
+        let stale = app.go_generation;
+
+        // What the event loop does when the worker's queue is full: the
+        // command never leaves, so no reply will ever clear `busy`.
+        app.on_command_dropped(&commands[0]);
+
+        assert!(!app.busy, "a dropped go-live must not leave the UI busy");
+        assert!(app.submit().len() == 1, "submitting again must be allowed");
+
+        // A late reply belonging to the dropped submission is still ignored.
+        assert_ne!(stale, app.go_generation);
     }
 
     #[test]

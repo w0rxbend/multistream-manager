@@ -127,6 +127,30 @@ fn require_terminal(stdin_is_terminal: bool, stdout_is_terminal: bool) -> Result
 /// slot, which behind a stalled network call can take minutes. A full queue
 /// already means the worker is far behind, so dropping the command and saying
 /// so beats freezing the whole interface.
+/// How a dropped command is named to the user.
+///
+/// A dropped command is reported, so the sentence has to say which capability
+/// did not happen. "That request was ignored" left the user guessing which of
+/// several things they had just pressed went missing.
+fn describe(command: &worker::Command) -> &'static str {
+    use worker::Command as C;
+    match command {
+        C::Connect(_) => "connecting",
+        C::SearchCategories { .. } => "a category search",
+        C::GoLive { .. } => "going live",
+        C::EndLive => "ending the broadcast",
+        C::PollStats => "a statistics refresh",
+        C::Login(_) | C::LoginAdd(_) => "the login",
+        C::ReloadConfig(_) => "reloading the configuration",
+        C::Logout(_) => "logging out",
+        C::Cleanup { .. } => "the broadcast cleanup",
+        C::ExportSuperchats => "the paid-event export",
+        C::ListStreams => "listing the stream keys",
+        C::CopyStreamKey(_) => "copying the stream key",
+        _ => "that request",
+    }
+}
+
 fn dispatch(
     app: &mut App,
     command_tx: &mpsc::Sender<worker::Command>,
@@ -136,11 +160,15 @@ fn dispatch(
     for command in commands {
         match command_tx.try_send(command) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(command)) => {
                 app.push_log(
                     worker::LogLevel::Error,
-                    "Still busy with earlier requests — that request was ignored, try again in a moment.",
+                    &format!(
+                        "Still busy with earlier requests — {} was dropped, try again in a moment.",
+                        describe(&command)
+                    ),
                 );
+                app.on_command_dropped(&command);
             }
             Err(TrySendError::Closed(_)) => {
                 // The worker has gone; nothing more can happen.
@@ -506,9 +534,32 @@ mod tests {
         assert!(
             app.log
                 .iter()
-                .any(|line| line.message.contains("that request was ignored")),
-            "the dropped command has to be visible: {:?}",
+                .any(|line| line.message.contains("a statistics refresh was dropped")),
+            "the dropped command has to be visible, and has to be named: {:?}",
             app.log
+        );
+    }
+
+    /// A dropped command must also undo whatever the interface set
+    /// optimistically before sending it, or the spinner never stops.
+    #[tokio::test]
+    async fn dropping_a_command_that_set_busy_clears_busy_again() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut app = app_for_dispatch();
+        app.busy = true;
+
+        dispatch(
+            &mut app,
+            &tx,
+            vec![
+                worker::Command::Connect(vec![]),
+                worker::Command::Connect(vec![]),
+            ],
+        );
+
+        assert!(
+            !app.busy,
+            "the second Connect never left, so nothing will ever clear busy"
         );
     }
 
