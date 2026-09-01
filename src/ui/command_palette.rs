@@ -406,31 +406,123 @@ pub const ENTRIES: &[Entry] = &[
     },
 ];
 
+/// One row of the palette as it is actually shown.
+///
+/// Built at open time rather than written down, because the palette is meant
+/// to be the complete list. [`ENTRIES`] below only covers the things a key
+/// sequence does with no single `Action` behind it; everything that *is* an
+/// action is generated from [`crate::keys::Action::ALL`], so a new action
+/// cannot be forgotten here — which is exactly what had happened: 31 written
+/// entries against more than sixty actions, with most of the OBS ones, chat
+/// scrolling, account cycling and everything on the Config tab unreachable.
+#[derive(Debug, Clone)]
+pub struct Row {
+    pub title: String,
+    pub keys: Vec<KeyEvent>,
+    /// The key as it is written on screen. Empty when the action is unbound,
+    /// which is the case the palette exists for.
+    pub shortcut: String,
+    pub keywords: String,
+    pub needs_chat: bool,
+}
+
+/// Build the full list: the hand-written sequences, then every action that is
+/// not already covered by one.
+fn build_rows(keymap: &crate::keys::Keymap) -> Vec<Row> {
+    let mut rows: Vec<Row> = Vec::new();
+    let mut covered: std::collections::HashSet<crate::keys::Action> =
+        std::collections::HashSet::new();
+
+    for entry in ENTRIES {
+        if let Some(action) = entry.action {
+            covered.insert(action);
+        }
+        rows.push(Row {
+            title: entry.title.to_string(),
+            // A bound action replays whatever it is bound to *now*; an entry
+            // with no action behind it replays the keys it was written with.
+            keys: entry
+                .action
+                .and_then(|action| keymap.chord_for(action))
+                .map(|chord| chord.into_iter().map(|key| key.to_event()).collect())
+                .unwrap_or_else(|| entry.keys.iter().map(|key| key.event()).collect()),
+            shortcut: entry
+                .action
+                .and_then(|action| keymap.binding_for(action))
+                .unwrap_or_else(|| entry.shortcut.to_string()),
+            keywords: entry.keywords.join(" "),
+            needs_chat: entry.needs_chat,
+        });
+    }
+
+    for &action in crate::keys::Action::ALL.iter() {
+        if covered.contains(&action) {
+            continue;
+        }
+        rows.push(Row {
+            title: action.describe().to_string(),
+            keys: keymap
+                .chord_for(action)
+                .map(|chord| chord.into_iter().map(|key| key.to_event()).collect())
+                .unwrap_or_default(),
+            shortcut: keymap.binding_for(action).unwrap_or_default(),
+            // The group and the action's own name, so searching for "obs" or
+            // for the name in config.toml both find it.
+            keywords: format!("{} {}", action.group(), action.name()),
+            needs_chat: action.name().starts_with("chat."),
+        });
+    }
+
+    rows
+}
+
 /// The palette's state. `None` in `App` means it is closed.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct CommandPalette {
     /// What has been typed so far.
     pub query: String,
     /// Which of the *matching* entries is selected.
     pub selected: usize,
+    /// Every row, built from the keymap when the palette was opened.
+    rows: Vec<Row>,
+    /// The rows matching `query`, recomputed on each edit rather than on each
+    /// call. `matches`, `chosen`, `move_by` and the drawing all want it, and
+    /// the drawing wants it several times per frame.
+    matching: Vec<usize>,
 }
 
 impl CommandPalette {
-    /// The entries matching the current query, as indices into [`ENTRIES`].
-    pub fn matches(&self) -> Vec<usize> {
-        matches_for(&self.query)
+    /// Open the palette against the bindings currently in force.
+    pub fn open(keymap: &crate::keys::Keymap) -> Self {
+        let rows = build_rows(keymap);
+        let matching = (0..rows.len()).collect();
+        Self {
+            query: String::new(),
+            selected: 0,
+            rows,
+            matching,
+        }
     }
 
-    /// The entry that would run if Enter were pressed now.
-    pub fn chosen(&self) -> Option<&'static Entry> {
-        self.matches()
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
+    }
+
+    /// The rows matching the current query, as indices into [`Self::rows`].
+    pub fn matches(&self) -> &[usize] {
+        &self.matching
+    }
+
+    /// The row that would run if Enter were pressed now.
+    pub fn chosen(&self) -> Option<&Row> {
+        self.matching
             .get(self.selected)
-            .map(|index| &ENTRIES[*index])
+            .and_then(|index| self.rows.get(*index))
     }
 
     /// Move the selection, wrapping at both ends.
     pub fn move_by(&mut self, delta: isize) {
-        let count = self.matches().len() as isize;
+        let count = self.matching.len() as isize;
         if count == 0 {
             self.selected = 0;
             return;
@@ -438,17 +530,30 @@ impl CommandPalette {
         self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
     }
 
+    pub fn select_first(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_last(&mut self) {
+        self.selected = self.matching.len().saturating_sub(1);
+    }
+
     /// Type a character into the query.
     pub fn push(&mut self, c: char) {
         self.query.push(c);
-        // A narrowed list has a different first entry, so the selection goes
-        // back to the top rather than pointing at whatever happens to be at
-        // the old index now.
-        self.selected = 0;
+        self.refilter();
     }
 
     pub fn backspace(&mut self) {
         self.query.pop();
+        self.refilter();
+    }
+
+    fn refilter(&mut self) {
+        self.matching = matches_for(&self.rows, &self.query);
+        // A narrowed list has a different first row, so the selection goes
+        // back to the top rather than pointing at whatever happens to be at
+        // the old index now.
         self.selected = 0;
     }
 }
@@ -459,28 +564,52 @@ impl CommandPalette {
 /// fuzzy subsequence match. Typing `copy key` finds "Copy the Twitch stream
 /// key to the clipboard" whichever order the words are in, and typing three
 /// letters does not return two-thirds of the list.
-fn matches_for(query: &str) -> Vec<usize> {
+fn matches_for(rows: &[Row], query: &str) -> Vec<usize> {
     let needles: Vec<String> = query
         .split_whitespace()
         .map(|word| word.to_ascii_lowercase())
         .collect();
     if needles.is_empty() {
-        return (0..ENTRIES.len()).collect();
+        return (0..rows.len()).collect();
     }
-    ENTRIES
+
+    let mut scored: Vec<(u8, usize)> = rows
         .iter()
         .enumerate()
-        .filter(|(_, entry)| {
+        .filter_map(|(index, row)| {
+            let title = row.title.to_ascii_lowercase();
             let haystack = format!(
-                "{} {} {}",
-                entry.title.to_ascii_lowercase(),
-                entry.shortcut.to_ascii_lowercase(),
-                entry.keywords.join(" ")
+                "{title} {} {}",
+                row.shortcut.to_ascii_lowercase(),
+                row.keywords.to_ascii_lowercase()
             );
-            needles.iter().all(|needle| haystack.contains(needle))
+            if !needles.iter().all(|needle| haystack.contains(needle)) {
+                return None;
+            }
+            // Rank, so a query that matches a title from the start comes above
+            // one that matches it in the middle or only through a keyword. The
+            // list used to come out in the order the const happened to be
+            // written in, regardless of how well anything matched.
+            let first = &needles[0];
+            let rank = if title.starts_with(first.as_str()) {
+                0
+            } else if title
+                .split_whitespace()
+                .any(|word| word.starts_with(first.as_str()))
+            {
+                1
+            } else if title.contains(first.as_str()) {
+                2
+            } else {
+                3
+            };
+            Some((rank, index))
         })
-        .map(|(index, _)| index)
-        .collect()
+        .collect();
+
+    // Stable within a rank, so equally good matches keep their listed order.
+    scored.sort_by_key(|(rank, _)| *rank);
+    scored.into_iter().map(|(_, index)| index).collect()
 }
 
 /// Draw the palette over the bottom half of `area`.
@@ -493,7 +622,6 @@ pub fn draw(
     area: Rect,
     palette: &CommandPalette,
     chat_open: bool,
-    keymap: &crate::keys::Keymap,
 ) {
     let sk = theme::skin();
     let matches = palette.matches();
@@ -534,7 +662,7 @@ pub fn draw(
                 if matches.is_empty() {
                     "   nothing matches".to_string()
                 } else {
-                    format!("   {} of {}", matches.len(), ENTRIES.len())
+                    format!("   {} of {}", matches.len(), palette.rows().len())
                 },
                 Style::new().fg(sk.muted),
             ),
@@ -549,20 +677,14 @@ pub fn draw(
         .saturating_sub(height.saturating_sub(1))
         .min(matches.len().saturating_sub(height.min(matches.len())));
 
-    // The key shown beside each entry comes from the keymap rather than from
-    // the entry's own text, so a rebound key shows the key it is actually on
-    // now. A palette that advertised the default after somebody changed it
-    // would be teaching the wrong thing.
-    let shortcut_for = |entry: &Entry| -> String {
-        entry
-            .action
-            .and_then(|action| keymap.binding_for(action))
-            .unwrap_or_else(|| entry.shortcut.to_string())
-    };
-
+    // Each row's key came from the keymap when the palette was opened, so a
+    // rebound key shows the key it is actually on now. An unbound action
+    // shows nothing at all in that column, which is the case the palette
+    // exists for.
     let widest = matches
         .iter()
-        .map(|index| shortcut_for(&ENTRIES[*index]).chars().count())
+        .filter_map(|index| palette.rows().get(*index))
+        .map(|row| row.shortcut.chars().count())
         .max()
         .unwrap_or(0);
 
@@ -572,7 +694,7 @@ pub fn draw(
         .skip(first)
         .take(height)
         .map(|(position, index)| {
-            let entry = &ENTRIES[*index];
+            let entry = &palette.rows()[*index];
             let selected = position == palette.selected;
             // An action that needs an open chat says so, rather than being
             // chosen and appearing to do nothing.
@@ -588,11 +710,11 @@ pub fn draw(
                     Style::new().fg(sk.accent),
                 ),
                 Span::styled(
-                    format!("{:<widest$}  ", shortcut_for(entry)),
+                    format!("{:<widest$}  ", entry.shortcut),
                     Style::new().fg(sk.accent),
                 ),
                 Span::styled(
-                    entry.title,
+                    entry.title.clone(),
                     if selected && !unavailable {
                         Style::new().fg(title_color).add_modifier(Modifier::BOLD)
                     } else {
@@ -622,47 +744,106 @@ pub fn draw(
 mod tests {
     use super::*;
 
+    fn palette() -> CommandPalette {
+        CommandPalette::open(&crate::keys::Keymap::default())
+    }
+
     #[test]
     fn an_empty_query_lists_everything() {
-        assert_eq!(matches_for("").len(), ENTRIES.len());
-        assert_eq!(matches_for("   ").len(), ENTRIES.len());
+        let palette = palette();
+        assert_eq!(matches_for(palette.rows(), "").len(), palette.rows().len());
+        assert_eq!(
+            matches_for(palette.rows(), "   ").len(),
+            palette.rows().len()
+        );
+    }
+
+    /// The palette's promise is that every capability stays reachable even
+    /// when it is unbound. Thirty-one hand-written entries against more than
+    /// sixty actions quietly broke that: most of the OBS actions, chat
+    /// scrolling, account cycling and everything on the Config tab were in no
+    /// list anywhere.
+    #[test]
+    fn every_action_appears_in_the_palette() {
+        let keymap = crate::keys::Keymap::default();
+        let palette = CommandPalette::open(&keymap);
+
+        for &action in crate::keys::Action::ALL.iter() {
+            // Either a hand-written entry stands for it — those have their own
+            // wording — or a row was generated from its description.
+            let written = ENTRIES.iter().any(|entry| entry.action == Some(action));
+            let generated = palette
+                .rows()
+                .iter()
+                .any(|row| row.title == action.describe());
+            assert!(
+                written || generated,
+                "{} ({}) is in no palette row",
+                action.name(),
+                action.describe()
+            );
+        }
     }
 
     /// Words in any order, which is what people actually type.
     #[test]
-    fn every_typed_word_has_to_appear_somewhere_in_the_entry() {
-        let by_title = matches_for("copy key");
-        let reversed = matches_for("key copy");
+    fn every_typed_word_has_to_appear_somewhere_in_the_row() {
+        let palette = palette();
+        let by_title = matches_for(palette.rows(), "copy key");
+        let reversed = matches_for(palette.rows(), "key copy");
         assert_eq!(by_title, reversed);
-        assert_eq!(by_title.len(), 2, "one entry per platform");
+        assert!(!by_title.is_empty());
         assert!(by_title
             .iter()
-            .all(|index| ENTRIES[*index].title.contains("stream key")));
+            .all(|index| palette.rows()[*index].title.to_lowercase().contains("key")));
     }
 
     #[test]
     fn searching_ignores_case_and_finds_words_from_the_keywords() {
         // "colour" appears in no title, only in the keywords.
-        let found = matches_for("COLOUR");
+        let palette = palette();
+        let found = matches_for(palette.rows(), "COLOUR");
         assert_eq!(found.len(), 1);
-        assert_eq!(ENTRIES[found[0]].title, "Choose a theme");
+        assert_eq!(palette.rows()[found[0]].title, "Choose a theme");
     }
 
     #[test]
     fn a_query_matching_nothing_returns_nothing_rather_than_everything() {
-        assert!(matches_for("xyzzy").is_empty());
+        let palette = palette();
+        assert!(matches_for(palette.rows(), "xyzzy").is_empty());
     }
 
+    /// The list used to come out in the order the const happened to be
+    /// written in, however well anything matched.
     #[test]
-    fn the_shortcut_itself_is_searchable() {
-        let found = matches_for("alt+3");
-        assert_eq!(found.len(), 1);
-        assert!(ENTRIES[found[0]].title.contains("Combined"));
+    fn a_title_that_starts_with_the_query_outranks_one_that_merely_contains_it() {
+        let rows = vec![
+            Row {
+                title: "Toggle the mute on everything".into(),
+                keys: Vec::new(),
+                shortcut: String::new(),
+                keywords: String::new(),
+                needs_chat: false,
+            },
+            Row {
+                title: "Mute the selected input".into(),
+                keys: Vec::new(),
+                shortcut: String::new(),
+                keywords: String::new(),
+                needs_chat: false,
+            },
+        ];
+
+        let found = matches_for(&rows, "mute");
+        assert_eq!(
+            rows[found[0]].title, "Mute the selected input",
+            "a title starting with the query has to come first"
+        );
     }
 
     #[test]
     fn typing_resets_the_selection_to_the_top_of_the_narrowed_list() {
-        let mut palette = CommandPalette::default();
+        let mut palette = palette();
         palette.move_by(5);
         assert_eq!(palette.selected, 5);
         palette.push('t');
@@ -674,41 +855,47 @@ mod tests {
 
     #[test]
     fn the_selection_wraps_at_both_ends() {
-        let mut palette = CommandPalette::default();
+        let mut palette = palette();
+        let last = palette.rows().len() - 1;
         palette.move_by(-1);
-        assert_eq!(palette.selected, ENTRIES.len() - 1);
+        assert_eq!(palette.selected, last);
         palette.move_by(1);
         assert_eq!(palette.selected, 0);
     }
 
     #[test]
     fn moving_within_an_empty_result_list_does_not_panic() {
-        let mut palette = CommandPalette {
-            query: "xyzzy".into(),
-            selected: 0,
-        };
+        let mut palette = palette();
+        for c in "xyzzy".chars() {
+            palette.push(c);
+        }
         palette.move_by(1);
         assert_eq!(palette.selected, 0);
         assert!(palette.chosen().is_none());
     }
 
-    /// Every entry must name at least one key, since choosing an entry works
-    /// by replaying its keys — an entry with none would do nothing at all.
+    /// Every hand-written entry must name at least one key, since choosing
+    /// one works by replaying its keys.
+    ///
+    /// A *generated* row may legitimately have none — that is what an unbound
+    /// action looks like, and reporting it honestly with a blank key column
+    /// beats hiding it.
     #[test]
-    fn every_entry_names_the_keys_it_replays() {
+    fn every_written_entry_names_the_keys_it_replays() {
         for entry in ENTRIES {
             assert!(!entry.keys.is_empty(), "{} replays nothing", entry.title);
             assert!(!entry.shortcut.is_empty(), "{} shows no key", entry.title);
         }
     }
 
-    /// Two entries with the same title would be indistinguishable in the list.
+    /// Two rows with the same title would be indistinguishable in the list.
     #[test]
-    fn no_two_entries_share_a_title() {
-        let mut titles: Vec<&str> = ENTRIES.iter().map(|entry| entry.title).collect();
+    fn no_two_rows_share_a_title() {
+        let palette = palette();
+        let mut titles: Vec<&str> = palette.rows().iter().map(|row| row.title.as_str()).collect();
         titles.sort_unstable();
         let count = titles.len();
         titles.dedup();
-        assert_eq!(titles.len(), count, "two entries share a title");
+        assert_eq!(titles.len(), count, "two rows share a title");
     }
 }

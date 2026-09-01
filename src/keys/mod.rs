@@ -184,6 +184,27 @@ impl Keymap {
             .map(|chord| write_chord(chord, self.leader))
     }
 
+    /// The keys that run `action`, as events to replay.
+    ///
+    /// The same choice [`Keymap::binding_for`] renders as text — the shortest
+    /// chord with the fewest modifiers — but as the keys themselves, so the
+    /// command palette can replay whatever the action is bound to *now*
+    /// rather than a default written down beside it.
+    pub fn chord_for(&self, action: Action) -> Option<Vec<Key>> {
+        self.bindings
+            .iter()
+            .filter(|(_, bound)| **bound == action)
+            .map(|((_, chord), _)| chord)
+            .min_by_key(|chord| {
+                let modifiers: u32 = chord
+                    .iter()
+                    .map(|key| key.modifiers.bits().count_ones())
+                    .sum();
+                (chord.len(), modifiers, chord.to_vec())
+            })
+            .cloned()
+    }
+
     /// Bindings that shadow each other, so the config can be checked.
     ///
     /// A chord bound in a context and also globally is not a conflict — that

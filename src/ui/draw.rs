@@ -111,7 +111,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
             frame.area(),
             palette,
             app.chat.active_key(app.chat.focus).is_some(),
-            &app.keymap,
         );
         return;
     }

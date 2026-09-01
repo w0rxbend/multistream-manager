@@ -89,6 +89,16 @@ impl Key {
 }
 
 impl Key {
+    /// This key as a terminal event, for replaying a binding.
+    ///
+    /// The inverse of [`Key::from_event`]. Used by the command palette, which
+    /// runs an action by replaying whatever it is bound to rather than
+    /// calling it directly — so a palette entry can never drift away from
+    /// what the key actually does.
+    pub fn to_event(self) -> KeyEvent {
+        KeyEvent::new(self.code, self.modifiers)
+    }
+
     pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         // A capital letter arrives from the terminal as the capital itself,
         // sometimes with the shift modifier set and sometimes without,

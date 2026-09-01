@@ -950,7 +950,7 @@ impl App {
         match action {
             Action::Quit => self.should_quit = true,
             Action::CommandPalette => {
-                self.command_palette = Some(super::command_palette::CommandPalette::default());
+                self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap));
             }
             Action::MessageHistory => {
                 self.toasts.dismiss_all();
@@ -2422,7 +2422,7 @@ impl App {
             return self.key_command_palette(key);
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p')) {
-            self.command_palette = Some(super::command_palette::CommandPalette::default());
+            self.command_palette = Some(super::command_palette::CommandPalette::open(&self.keymap));
             return vec![];
         }
 
@@ -3139,7 +3139,7 @@ impl App {
             KeyCode::Enter => {
                 let keys: Vec<KeyEvent> = palette
                     .chosen()
-                    .map(|entry| entry.keys.iter().map(|key| key.event()).collect())
+                    .map(|row| row.keys.clone())
                     .unwrap_or_default();
                 // Close the palette *before* replaying, or the replayed key
                 // would be typed straight back into the query box.
@@ -3152,6 +3152,12 @@ impl App {
             }
             KeyCode::Up => palette.move_by(-1),
             KeyCode::Down | KeyCode::Tab => palette.move_by(1),
+            // The list is now the whole action set rather than 31 rows, so it
+            // is long enough that walking it one line at a time is a chore.
+            KeyCode::PageUp => palette.move_by(-10),
+            KeyCode::PageDown => palette.move_by(10),
+            KeyCode::Home => palette.select_first(),
+            KeyCode::End => palette.select_last(),
             KeyCode::Backspace => palette.backspace(),
             // Text, but only text. A control- or alt-modified key is a
             // shortcut somebody pressed out of habit, not a letter they meant
@@ -5755,7 +5761,12 @@ mod tests {
         let palette = app.command_palette.as_ref().expect("the palette is open");
         assert_eq!(
             palette.matches().len(),
-            super::super::command_palette::ENTRIES.len()
+            palette.rows().len(),
+            "an empty query lists everything"
+        );
+        assert!(
+            palette.rows().len() > super::super::command_palette::ENTRIES.len(),
+            "the list is generated from the actions, not only the written entries"
         );
 
         for c in "theme".chars() {

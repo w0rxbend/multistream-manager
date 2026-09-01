@@ -77,7 +77,14 @@ Two other ways to find something:
 * <kbd>Ctrl</kbd>+<kbd>P</kbd> opens the **command palette**: every action in
   the program, filtered as you type, each row showing the key that runs it. Using
   the palette teaches you the key you could have pressed, so over time you stop
-  needing it.
+  needing it. Rows whose title starts with what you typed come first.
+  <kbd>PgUp</kbd>/<kbd>PgDn</kbd> and <kbd>Home</kbd>/<kbd>End</kbd> move
+  through a long list.
+
+  The list is built from the action set itself, so a capability cannot be
+  missing from it. An action you have unbound with `""` still appears, with a
+  blank key column — that is the point: the palette is what makes an unbindable
+  long tail acceptable.
 
 When an action has several bindings, the one shown beside it is the one worth
 learning — the fewest keys, and among equals the fewest modifiers. That is why
