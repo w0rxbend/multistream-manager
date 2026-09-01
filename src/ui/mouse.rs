@@ -22,12 +22,13 @@ use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::model::Platform;
+use crate::ui::app::Tab;
 
 /// What the pointer is over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     /// One of the top-level tabs, by its index in the tab bar.
-    Tab(usize),
+    Tab(Tab),
     /// A chat pane, on the Chat or Combined tab.
     ChatPane(Platform),
     /// The stream-info half of the Combined tab.
@@ -40,7 +41,7 @@ pub enum Target {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     /// Switch to a top-level tab.
-    SelectTab(usize),
+    SelectTab(Tab),
     /// Give the keyboard to a chat pane.
     FocusChat(Platform),
     /// Give the keyboard to the stream-info half of the Combined tab.
@@ -51,25 +52,20 @@ pub enum Action {
     ScrollForward,
 }
 
-/// The tab labels, in the order the tab bar draws them.
-///
-/// Written here as well as in the drawing code because the hit boxes have to
-/// be built from the same strings the labels are drawn from — a click landing
-/// one column out is the kind of bug nobody reports, they just decide the
-/// mouse does not work.
-pub const TAB_LABELS: [&str; 3] = ["1 Stream Info", "2 Chat", "3 Combined"];
-
-/// Which tab label sits at column `x` of the tab bar, if any.
+/// Which tab sits at column `x` of the tab bar, if any.
 ///
 /// The bar is drawn as `" label " " " " label "…` — each label padded with one
-/// space either side, separated by one more.
-pub fn tab_at(x: u16) -> Option<usize> {
+/// space either side, separated by one more. The labels come from
+/// [`Tab::label`], the same source the bar is drawn from, because a hit box
+/// built from a second copy of the strings is a click landing one column out:
+/// the kind of bug nobody reports, they just decide the mouse does not work.
+pub fn tab_at(x: u16) -> Option<Tab> {
     let mut cursor = 0u16;
-    for (index, label) in TAB_LABELS.iter().enumerate() {
+    for tab in Tab::ALL {
         // One space before the label, the label, one space after.
-        let width = label.chars().count() as u16 + 2;
+        let width = tab.label().chars().count() as u16 + 2;
         if x >= cursor && x < cursor + width {
-            return Some(index);
+            return Some(tab);
         }
         // The separating space between one tab and the next.
         cursor += width + 1;
@@ -142,7 +138,7 @@ pub fn target_at(
     let layout = Layout::of(area);
     if contains(layout.tab_bar, x, y) {
         return match tab_at(x) {
-            Some(index) => Target::Tab(index),
+            Some(tab) => Target::Tab(tab),
             None => Target::Body,
         };
     }
@@ -212,7 +208,7 @@ pub fn action_for(
                 combined,
                 split_percent,
             ) {
-                Target::Tab(index) => Some(Action::SelectTab(index)),
+                Target::Tab(tab) => Some(Action::SelectTab(tab)),
                 Target::ChatPane(platform) => Some(Action::FocusChat(platform)),
                 Target::StreamInfo => Some(Action::FocusStreamInfo),
                 Target::Body => None,
@@ -263,38 +259,78 @@ mod tests {
     /// landing on none.
     #[test]
     fn each_tab_label_has_its_own_hit_box() {
-        let mut seen = vec![None; 60];
-        for x in 0..60u16 {
-            seen[x as usize] = tab_at(x);
+        // Wide enough for all five labels plus their separators.
+        let width = 80u16;
+        let seen: Vec<Option<Tab>> = (0..width).map(tab_at).collect();
+
+        for tab in Tab::ALL {
+            assert!(
+                seen.contains(&Some(tab)),
+                "{} cannot be clicked",
+                tab.label()
+            );
         }
-        for index in 0..TAB_LABELS.len() {
-            assert!(seen.contains(&Some(index)), "tab {index} cannot be clicked");
-        }
+
         // The hit boxes appear in order, left to right, with no interleaving.
-        let order: Vec<usize> = seen.iter().flatten().copied().collect();
+        let order: Vec<usize> = seen
+            .iter()
+            .flatten()
+            .map(|tab| Tab::ALL.iter().position(|other| other == tab).unwrap())
+            .collect();
         let mut sorted = order.clone();
         sorted.sort_unstable();
         assert_eq!(order, sorted, "the tab hit boxes are out of order");
+    }
+
+    /// The hit box for each label has to be exactly as wide as the label the
+    /// tab bar draws, or clicks land one column out at the right-hand end.
+    /// Both now come from `Tab::label`, and this checks the geometry that
+    /// connects them.
+    #[test]
+    fn a_hit_box_is_exactly_as_wide_as_its_drawn_label() {
+        let mut expected_start = 0u16;
+        for tab in Tab::ALL {
+            let width = tab.label().chars().count() as u16 + 2;
+            assert_eq!(
+                tab_at(expected_start),
+                Some(tab),
+                "the first column of {} must hit it",
+                tab.label()
+            );
+            assert_eq!(
+                tab_at(expected_start + width - 1),
+                Some(tab),
+                "the last column of {} must hit it",
+                tab.label()
+            );
+            assert_ne!(
+                tab_at(expected_start + width),
+                Some(tab),
+                "the separator after {} must not hit it",
+                tab.label()
+            );
+            expected_start += width + 1;
+        }
     }
 
     /// The first column of the bar is the space before the first label, which
     /// is part of that label's box; well past the last label is nothing.
     #[test]
     fn clicking_beyond_the_last_tab_hits_nothing() {
-        assert_eq!(tab_at(0), Some(0));
-        assert_eq!(tab_at(99), None);
+        assert_eq!(tab_at(0), Some(Tab::StreamInfo));
+        assert_eq!(tab_at(199), None);
     }
 
     #[test]
     fn clicking_a_tab_selects_it() {
         assert_eq!(
             action_for(click(1, 0), area(), false, false, 50),
-            Some(Action::SelectTab(0))
+            Some(Action::SelectTab(Tab::StreamInfo))
         );
         // "2 Chat" starts after "1 Stream Info" (15 cells) plus a separator.
         assert_eq!(
             action_for(click(17, 0), area(), false, false, 50),
-            Some(Action::SelectTab(1))
+            Some(Action::SelectTab(Tab::Chat))
         );
     }
 

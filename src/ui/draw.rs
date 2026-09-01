@@ -136,18 +136,18 @@ fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!(" {label} "), Style::default().fg(sk.muted))
         }
     };
-    let line = Line::from(vec![
-        tab("1 Stream Info", app.tab == super::app::Tab::StreamInfo),
-        Span::raw(" "),
-        tab("2 Chat", app.tab == super::app::Tab::Chat),
-        Span::raw(" "),
-        tab("3 Combined", app.tab == super::app::Tab::Combined),
-        Span::raw(" "),
-        tab("4 OBS", app.tab == super::app::Tab::Obs),
-        Span::raw(" "),
-        tab("5 Config", app.tab == super::app::Tab::Config),
-        Span::styled("   alt+1…5", Style::default().fg(sk.muted)),
-    ]);
+    // Built from `Tab::ALL` and `Tab::label`, the same source the mouse
+    // hit-testing uses, so the drawn bar and the clickable boxes cannot drift
+    // apart again — they had, and two of the five tabs ignored the mouse.
+    let mut spans = Vec::new();
+    for (index, this_tab) in super::app::Tab::ALL.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(tab(this_tab.label(), app.tab == this_tab));
+    }
+    spans.push(Span::styled("   alt+1…5", Style::default().fg(sk.muted)));
+    let line = Line::from(spans);
     frame.render_widget(Paragraph::new(line), area);
 
     // The telemetry sits at the right-hand end of the same row. It shares the

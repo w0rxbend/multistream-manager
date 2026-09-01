@@ -170,6 +170,33 @@ pub enum Tab {
     Config,
 }
 
+impl Tab {
+    /// Every tab, in the order the tab bar draws them.
+    pub const ALL: [Tab; 5] = [
+        Tab::StreamInfo,
+        Tab::Chat,
+        Tab::Combined,
+        Tab::Obs,
+        Tab::Config,
+    ];
+
+    /// The label the tab bar shows, leading digit included.
+    ///
+    /// One definition, used both to draw the bar and to work out which label
+    /// a click landed on. They were written out separately before, and drifted
+    /// — the drawing code listed five tabs and the hit-testing three, so
+    /// clicking "4 OBS" or "5 Config" did nothing at all, with no feedback.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::StreamInfo => "1 Stream Info",
+            Tab::Chat => "2 Chat",
+            Tab::Combined => "3 Combined",
+            Tab::Obs => "4 OBS",
+            Tab::Config => "5 Config",
+        }
+    }
+}
+
 /// Which half of the combined tab the keyboard is talking to.
 ///
 /// The two halves want the same letters (`r` refreshes statistics on one side
@@ -2254,42 +2281,14 @@ impl App {
                     self.toasts.open_history();
                     return vec![];
                 }
-                // The OBS tab. Entering it asks for a fresh look at OBS,
-                // since anything may have changed there while it was not on
-                // screen and no events arrive for a scene collection swap.
-                KeyCode::Char('4') => {
-                    self.chat.pending_mod = None;
-                    if self.chat_is_showing() {
-                        self.chat.deactivate();
-                    }
-                    self.tab = Tab::Obs;
-                    self.obs_command(crate::obs::task::Command::Refresh);
-                    return vec![];
-                }
-                KeyCode::Char('3') => {
-                    self.chat.pending_mod = None;
-                    self.tab = Tab::Combined;
-                    self.combined_focus = CombinedFocus::Chat;
-                    self.chat.activate(&self.config);
-                    return vec![];
-                }
-                KeyCode::Char('1') => {
-                    if self.chat_is_showing() {
-                        self.chat.deactivate();
-                    }
-                    // Leaving the tab must not carry an armed destructive
-                    // confirmation (or a half-typed chord) back in later.
-                    self.chat.pending_mod = None;
-                    self.tab = Tab::StreamInfo;
-                    return vec![];
-                }
-                KeyCode::Char('2') => {
-                    self.chat.pending_mod = None;
-                    self.tab = Tab::Chat;
-                    // Lazy connection happens here: entering the tab opens
-                    // the selected accounts' own chats if they are not open.
-                    self.chat.activate(&self.config);
-                    return vec![];
+                // Alt+1..5 select a tab. Delegated to `go_to_tab` rather
+                // than reimplemented here: this block used to carry its own
+                // copy of the entering-a-tab logic, and had already drifted
+                // from it — Alt+5 had no arm at all, and Alt+4's copy of the
+                // OBS refresh was a second place to keep in step.
+                KeyCode::Char(digit @ '1'..='5') => {
+                    let index = digit as usize - '1' as usize;
+                    return self.go_to_tab(Tab::ALL[index]);
                 }
                 _ => {}
             }
@@ -2763,14 +2762,11 @@ impl App {
             {
                 vec![]
             }
-            Action::SelectTab(index) => {
-                let key = match index {
-                    0 => '1',
-                    1 => '2',
-                    _ => '3',
-                };
-                self.handle_key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::ALT))
-            }
+            // Straight to `go_to_tab`, which is what a click means. It used
+            // to build a synthetic Alt+digit key event and feed it back
+            // through the whole key handler, and the translation only
+            // covered the first three tabs.
+            Action::SelectTab(tab) => self.go_to_tab(tab),
             Action::FocusChat(platform) => {
                 // On the combined tab the keyboard may be on the stream-info
                 // half, so clicking a chat pane has to move it across as well
@@ -4525,6 +4521,20 @@ mod tests {
 
     /// Leaving a tab that shows chat must mark the chats hidden, whichever of
     /// the two chat-showing tabs it was.
+    /// All five tabs, from the keyboard and from a click. Alt+4 and Alt+5
+    /// used to be handled by a hardcoded block that had drifted from
+    /// `go_to_tab`, and clicking either did nothing because the mouse's copy
+    /// of the tab labels only listed three.
+    #[test]
+    fn every_tab_can_be_reached_by_its_alt_digit() {
+        let mut app = app();
+        for (index, tab) in Tab::ALL.into_iter().enumerate() {
+            let digit = char::from_digit(index as u32 + 1, 10).unwrap();
+            app.handle_key(KeyEvent::new(KeyCode::Char(digit), KeyModifiers::ALT));
+            assert_eq!(app.tab, tab, "alt+{digit} must reach {}", tab.label());
+        }
+    }
+
     #[test]
     fn leaving_the_combined_tab_hides_the_chats() {
         let mut app = app();
