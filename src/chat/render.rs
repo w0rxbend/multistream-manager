@@ -588,6 +588,13 @@ pub struct RenderOpts {
     /// uses it to suppress the repeated author header so a run of messages
     /// reads as one block under a single name (twi ContinuesGroup).
     pub continues_group: bool,
+    /// This message matched a highlight rule.
+    ///
+    /// Drawn like a mention, because it means the same thing to the reader:
+    /// look at this one. The rules exist so that "look at this one" can mean
+    /// something other than your own name — a giveaway keyword, a moderator
+    /// speaking, anything paid.
+    pub highlighted: bool,
     /// This message names you.
     ///
     /// The program already worked this out — the `1` filter is exactly this
@@ -607,6 +614,7 @@ impl Default for RenderOpts {
             highlight_emotes: true,
             full_username: false,
             continues_group: false,
+            highlighted: false,
             mentions_me: false,
         }
     }
@@ -757,7 +765,7 @@ pub fn render_message(msg: &ChatMessage, width: u16, opts: &RenderOpts) -> Vec<L
 /// selection highlight — the two mean different things and have to be
 /// distinguishable when they land on the same row.
 fn mark_mention(rows: &mut [Line<'static>], opts: &RenderOpts) {
-    if !opts.mentions_me {
+    if !opts.mentions_me && !opts.highlighted {
         return;
     }
     for row in rows.iter_mut() {

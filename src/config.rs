@@ -737,6 +737,11 @@ impl YouTubeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
+    /// Rules that pick a message out of the stream, and the logins never
+    /// picked out. See [`crate::chat::rules`].
+    #[serde(flatten)]
+    pub highlights: crate::chat::rules::Highlights,
+
     /// How many messages each chat keeps in memory. Older messages are
     /// discarded; this is what keeps a chat open for hours from growing
     /// memory without bound.
@@ -778,6 +783,7 @@ pub struct ChatConfig {
 impl Default for ChatConfig {
     fn default() -> Self {
         Self {
+            highlights: crate::chat::rules::Highlights::default(),
             scrollback_limit: 1000,
             poll_interval_floor_ms: 1000,
             poll_interval_ceiling_ms: 0,

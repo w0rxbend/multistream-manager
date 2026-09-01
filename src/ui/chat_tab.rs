@@ -537,6 +537,25 @@ impl ChatTabState {
             if self.config.chat.notifications && hidden_enough {
                 if let Some(notification) = high_signal(msg, &self.config.notifications) {
                     self.notifier.send(notification);
+                } else if self
+                    .config
+                    .chat
+                    .highlights
+                    .check(msg)
+                    .is_some_and(|hit| hit.notify)
+                {
+                    // A rule the user wrote, asking to be told. Only when the
+                    // rule says so: a notification for every match of a
+                    // common word is how somebody learns to ignore their
+                    // notifications.
+                    //
+                    // After `high_signal`, not before, so a raid that also
+                    // matches a rule is still announced as a raid.
+                    self.notifier.send(crate::notify::Notification::new(
+                        format!("{} in chat", msg.author.display_name),
+                        msg.text.clone(),
+                        crate::notify::Urgency::Normal,
+                    ));
                 }
             }
         }
@@ -1767,6 +1786,7 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
     let len = chat.state.messages.len();
     let newest_visible = len.saturating_sub(chat.state.scroll);
     // The mentions filter needs to know who "you" are in this chat.
+    let highlights = &state.config.chat.highlights;
     let self_login = state
         .selected_account(platform)
         .and_then(|account| account.own_target.clone())
@@ -1816,6 +1836,9 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
         // A message that names you gets a gutter bar. `self_login` is
         // already resolved here for the filter, so this costs nothing extra.
         opts.mentions_me = crate::chat::state::mentions(msg, &self_login);
+        // …and so does one a highlight rule picked out. The check returns
+        // immediately when no rules are configured, which is the usual case.
+        opts.highlighted = highlights.check(msg).is_some();
         let mut rendered = render_message(msg, area.width, &opts);
         if Some(index) == selected_index {
             // The selection is a background wash over the whole message so
@@ -2125,6 +2148,36 @@ mod tests {
     /// The event this whole feature exists for. A raid gives you seconds to
     /// greet a few hundred people, and by default the pop-up fires whether or
     /// not the chat pane happens to be on screen — because during a stream it
+    /// A rule that asks to be told has to reach the desktop, and one that
+    /// does not must stay quiet — a notification for every match of a common
+    /// word is how somebody learns to ignore their notifications.
+    #[tokio::test]
+    async fn a_highlight_rule_notifies_only_when_it_asks_to() {
+        let mut state = tab_state(1, 0);
+        let notifier = Notifier::new(true);
+        let key = with_open_chat(&mut state, notifier.clone());
+        state.config.chat.highlights = crate::chat::rules::Highlights {
+            ignore: vec![],
+            rules: vec![crate::chat::rules::Rule {
+                match_on: crate::chat::rules::Match::Word,
+                pattern: "giveaway".into(),
+                notify: false,
+            }],
+        };
+
+        let mut msg = raid();
+        msg.kind = crate::chat::MessageKind::Chat;
+        msg.meta = None;
+        msg.text = "when is the giveaway".into();
+        state.handle_event(key.clone(), ChatEvent::Message(Box::new(msg.clone())));
+        assert_eq!(notifier.delivered(), 0, "a quiet rule stays quiet");
+
+        state.config.chat.highlights.rules[0].notify = true;
+        msg.id = "m2".into();
+        state.handle_event(key, ChatEvent::Message(Box::new(msg)));
+        assert_eq!(notifier.delivered(), 1, "a rule that asks is delivered");
+    }
+
     /// The composer used to support exactly two operations: append a
     /// character, and delete the last one. Fixing a typo six words back meant
     /// backspacing over everything after it.

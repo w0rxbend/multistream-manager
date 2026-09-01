@@ -267,6 +267,55 @@ the default `poll_interval_secs = 15` is roughly 5,700 units a day on its own �
 more than half of a default 10,000-unit project. Config → Chat shows the day's
 figure so you can see where you are before polling pauses rather than after.
 
+### Highlight rules
+
+The digit filters in the chat pane **exclude**: pressing <kbd>3</kbd> hides
+everything that is not a paid event. That is the right tool for reading back
+through a busy chat and the wrong one for the live case, where you want
+everything on screen and one line to catch your eye.
+
+Highlight rules **promote**. They are a separate system, the way
+[Chatterino](https://chatterino.com/) keeps its highlights and its filters
+separate:
+
+```toml
+[chat]
+# Never highlight these, whatever the rules below say. Checked first.
+ignore = ["mybot", "streamelements"]
+
+[[chat.highlight]]
+match = "word"          # a whole word: "cat" will not match "category"
+pattern = "giveaway"
+notify = true           # also raise a desktop notification
+
+[[chat.highlight]]
+match = "badge"         # moderator, vip, subscriber, member, broadcaster
+pattern = "moderator"
+
+[[chat.highlight]]
+match = "event"         # paid, membership, notice, action, chat
+pattern = "paid"
+```
+
+`match` takes `phrase` (anywhere in the text), `word` (whole word), `user` (the
+login or display name), `badge`, or `event`. The first rule that matches wins,
+so put a specific rule above a broad one. A matched message gets the same accent
+gutter a mention does, because it means the same thing to the reader: *look at
+this one*.
+
+`notify` is off by default. A notification for every match of a common word is
+how somebody learns to ignore their notifications.
+
+Two things are never highlighted: your own messages — a rule on your own name
+would otherwise fire on everything you send — and anybody in `ignore`, which is
+what stops your own bot's every announcement lighting up the pane.
+
+> [!NOTE]
+> There are deliberately no regular expressions. Adding a regex engine to a
+> project that vets its dependencies for licences and security advisories is a
+> real cost, and phrase, word, user, badge and event matching covers what people
+> actually write. When one pattern is not enough, the answer is a second rule.
+
 ### The chat log settings
 
 This is the one `[chat]` setting with a switch in the interface: **Config →

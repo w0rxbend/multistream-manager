@@ -31,6 +31,7 @@ pub mod ratelimit;
 pub mod render;
 pub mod ring;
 pub mod roster;
+pub mod rules;
 pub mod source;
 pub mod state;
 pub mod twitch;
