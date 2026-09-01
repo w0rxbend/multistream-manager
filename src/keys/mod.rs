@@ -319,6 +319,7 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     // <Leader>c — chat.
     (Context::Global, "<Leader>cc", Action::ChatCompose),
     (Context::Global, "<Leader>cj", Action::ChatJoin),
+    (Context::Global, "<Leader>cx", Action::ChatClose),
     (Context::Global, "<Leader>cr", Action::ChatReconnect),
     (Context::Global, "<Leader>cs", Action::ChatSearch),
     (Context::Global, "<Leader>ce", Action::ChatEmojiPicker),
@@ -623,6 +624,13 @@ mod tests {
 
     /// Every action ought to be reachable somehow, or it is dead weight
     /// nobody can run.
+    ///
+    /// Note the limit of this check: it proves every *action* has a key, not
+    /// that every *capability* has an action. Closing a chat was implemented
+    /// and tested and completely unreachable for exactly that reason — it
+    /// hung off a second, private space-leader inside the chat key handler
+    /// that the real keymap consumed before it ever ran, and no `Action`
+    /// named it, so nothing here noticed.
     #[test]
     fn every_action_has_a_default_binding() {
         let map = map();

@@ -181,6 +181,8 @@ letter goes to that and find keeps `f`.
 |---|---|---|
 | <kbd>c</kbd> <kbd>c</kbd> | `chat.compose` | Write a message |
 | <kbd>c</kbd> <kbd>j</kbd> | `chat.join` | Join a channel |
+| `chat.close` | Close this chat |
+| <kbd>c</kbd> <kbd>x</kbd> | `chat.close` | Close this chat |
 | <kbd>c</kbd> <kbd>r</kbd> | `chat.reconnect` | Reconnect chat |
 | <kbd>c</kbd> <kbd>s</kbd> | `chat.search` | Search chat |
 | <kbd>c</kbd> <kbd>e</kbd> | `chat.emoji` | Emoji picker |

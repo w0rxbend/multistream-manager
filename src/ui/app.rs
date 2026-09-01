@@ -882,7 +882,6 @@ impl App {
                         CombinedFocus::StreamInfo => CombinedFocus::Chat,
                     };
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                 }
             }
 
@@ -904,6 +903,7 @@ impl App {
             Action::ChatSearchNext => self.chat.search_step(true),
             Action::ChatSearchPrevious => self.chat.search_step(false),
             Action::ChatJoin => self.chat.mode = super::chat_tab::ChatFocus::Join(String::new()),
+            Action::ChatClose => self.chat.close_active_chat(),
             Action::ChatReconnect => self.chat.reconnect_active(),
             Action::ChatNextChat => self.chat.cycle_chat(true),
             Action::ChatPreviousChat => self.chat.cycle_chat(false),
@@ -994,7 +994,6 @@ impl App {
     /// Switch to a tab, doing whatever that tab needs on the way in.
     fn go_to_tab(&mut self, tab: Tab) -> Vec<Command> {
         self.chat.pending_mod = None;
-        self.chat.pending_space = false;
 
         // Leaving the chat panes releases their connections' hold on the
         // keyboard; entering them opens the logged-in accounts' chats.
@@ -2203,7 +2202,6 @@ impl App {
                         CombinedFocus::StreamInfo => CombinedFocus::Chat,
                     };
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     return vec![];
                 }
                 // Cycle how much the interface animates, without going to
@@ -2211,7 +2209,6 @@ impl App {
                 // something you find out by looking at it.
                 KeyCode::Char('a') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     self.animation = self.animation.next();
                     self.config.appearance.animations = self.animation.name().to_string();
                     let mode = self.animation.name();
@@ -2221,7 +2218,6 @@ impl App {
                 // Show or hide the process telemetry in the header.
                 KeyCode::Char('t') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     self.config.appearance.telemetry = !self.config.appearance.telemetry;
                     let state = if self.config.appearance.telemetry {
                         "on"
@@ -2234,7 +2230,6 @@ impl App {
                 // Open the message history — vim's `:messages`, on a key.
                 KeyCode::Char('m') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     // Opening the history takes the pop-ups off the screen:
                     // every one of them is in the list you are now looking
                     // at, so leaving them stacked on top of it would only
@@ -2248,7 +2243,6 @@ impl App {
                 // screen and no events arrive for a scene collection swap.
                 KeyCode::Char('4') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     if self.chat_is_showing() {
                         self.chat.deactivate();
                     }
@@ -2258,7 +2252,6 @@ impl App {
                 }
                 KeyCode::Char('3') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     self.tab = Tab::Combined;
                     self.combined_focus = CombinedFocus::Chat;
                     self.chat.activate(&self.config);
@@ -2271,13 +2264,11 @@ impl App {
                     // Leaving the tab must not carry an armed destructive
                     // confirmation (or a half-typed chord) back in later.
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     self.tab = Tab::StreamInfo;
                     return vec![];
                 }
                 KeyCode::Char('2') => {
                     self.chat.pending_mod = None;
-                    self.chat.pending_space = false;
                     self.tab = Tab::Chat;
                     // Lazy connection happens here: entering the tab opens
                     // the selected accounts' own chats if they are not open.
@@ -2473,19 +2464,6 @@ impl App {
             ChatFocus::Normal => {}
         }
 
-        // The space leader chord: space then one key. Any unbound second key
-        // cancels the chord instead of acting.
-        if self.chat.pending_space {
-            self.chat.pending_space = false;
-            match key.code {
-                KeyCode::Char('c') => self.chat.mode = ChatFocus::Join(String::new()),
-                KeyCode::Char('x') => self.chat.close_active_chat(),
-                KeyCode::Char('a') => self.chat.toggle_activity(),
-                _ => {}
-            }
-            return vec![];
-        }
-
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('r') => self.chat.reconnect_active(),
@@ -2515,7 +2493,6 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char(' ') => self.chat.pending_space = true,
             KeyCode::Char('h')
             | KeyCode::Left
             | KeyCode::Char('l')

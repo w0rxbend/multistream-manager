@@ -103,8 +103,6 @@ pub struct ChatTabState {
     /// Which pane keyboard input goes to.
     pub focus: Platform,
     pub mode: ChatFocus,
-    /// `space` was pressed and the next key completes the chord.
-    pub pending_space: bool,
     /// A moderation key was pressed once; the same key again confirms, any
     /// other key cancels. Destructive actions never fire on one keystroke.
     pub pending_mod: Option<ModAction>,
@@ -183,7 +181,6 @@ impl ChatTabState {
         Self {
             focus: Platform::Twitch,
             mode: ChatFocus::Normal,
-            pending_space: false,
             pending_mod: None,
             accounts,
             selected: BTreeMap::new(),
@@ -1888,7 +1885,6 @@ mod tests {
         let mut state = ChatTabState {
             focus: Platform::Twitch,
             mode: ChatFocus::Normal,
-            pending_space: false,
             pending_mod: None,
             accounts: BTreeMap::new(),
             selected: BTreeMap::new(),
