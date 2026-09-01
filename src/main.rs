@@ -129,7 +129,19 @@ async fn main() -> Result<()> {
     // flushed. The interface owns the terminal, so nothing can be printed to
     // the screen while it runs and every diagnostic goes to the log file
     // instead; the Files section of the configuration tab says where that is.
-    let _log_guard = logging::init().ok();
+    //
+    // If it cannot start, say so on stderr *before* the interface claims the
+    // terminal — this is the one moment at which printing is still safe.
+    // Silently discarding the error meant the program ran with no subscriber
+    // at all, and every later "check msm.log" instruction pointed at a file
+    // that was never being written.
+    let _log_guard = match logging::init() {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            eprintln!("msm: logging is unavailable ({err:#}); continuing without a log file.");
+            None
+        }
+    };
 
     // A config file that cannot be read is not a reason to refuse to start.
     // The interface can ask for everything it needs — that is what the setup
