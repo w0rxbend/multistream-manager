@@ -58,8 +58,11 @@ fn plural(count: usize) -> &'static str {
 /// Anything that has ever received a feed is neither listed nor touched —
 /// deleting a stream somebody might still want the recording of would be an
 /// unrecoverable mistake made on their behalf.
-pub async fn find_stale_broadcasts(config: &Config) -> Result<Vec<StaleBroadcast>> {
-    let mut engine = youtube_engine(config).await?;
+pub async fn find_stale_broadcasts(
+    config: &Config,
+    ledger: crate::quota::QuotaStore,
+) -> Result<Vec<StaleBroadcast>> {
+    let mut engine = youtube_engine(config, ledger).await?;
     engine.list_stale_broadcasts(Platform::YouTube).await
 }
 
@@ -68,9 +71,13 @@ pub async fn find_stale_broadcasts(config: &Config) -> Result<Vec<StaleBroadcast
 /// Built for one platform on purpose: none of this touches Twitch, and
 /// authenticating a platform that has no part in the job would turn a
 /// YouTube problem into a Twitch one.
-async fn youtube_engine(config: &Config) -> Result<crate::engine::Engine> {
-    let (mut engine, mut failures) = crate::engine::Engine::build(config, &[Platform::YouTube])
-        .await
+async fn youtube_engine(
+    config: &Config,
+    ledger: crate::quota::QuotaStore,
+) -> Result<crate::engine::Engine> {
+    let (mut engine, mut failures) =
+        crate::engine::Engine::build(config, &[Platform::YouTube], ledger)
+            .await
         .context("preparing the YouTube connection")?;
     if let Some((_, reason)) = failures.pop() {
         anyhow::bail!("{reason}");
@@ -84,8 +91,12 @@ async fn youtube_engine(config: &Config) -> Result<crate::engine::Engine> {
 }
 
 /// Delete the broadcasts listed, reporting each outcome.
-pub async fn delete_broadcasts(config: &Config, ids: &[StaleBroadcast]) -> Result<CleanupReport> {
-    let mut engine = youtube_engine(config).await?;
+pub async fn delete_broadcasts(
+    config: &Config,
+    ids: &[StaleBroadcast],
+    ledger: crate::quota::QuotaStore,
+) -> Result<CleanupReport> {
+    let mut engine = youtube_engine(config, ledger).await?;
 
     let mut report = CleanupReport::default();
     for broadcast in ids {

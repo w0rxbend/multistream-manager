@@ -246,6 +246,12 @@ failures.
 > request anything. If you have applied for a higher quota, set it here so the
 > reserve is calculated against the real figure.
 
+The estimate counts **everything** this program spends on YouTube, not only
+chat: the chat poll and message sending, and also the statistics poll, which at
+the default `poll_interval_secs = 15` is roughly 5,700 units a day on its own —
+more than half of a default 10,000-unit project. Config → Chat shows the day's
+figure so you can see where you are before polling pauses rather than after.
+
 ### The chat log settings
 
 This is the one `[chat]` setting with a switch in the interface: **Config →

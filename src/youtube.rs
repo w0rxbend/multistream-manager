@@ -89,6 +89,16 @@ pub struct YouTubeBackend {
     /// Stops statistics polling from hammering the API after it has already
     /// said the daily quota is gone. See [`QuotaBackoff`].
     quota: QuotaBackoff,
+    /// The shared daily-unit estimate, so the statistics poll counts into the
+    /// same ledger chat does.
+    ///
+    /// Without this the biggest single consumer in the program was invisible
+    /// to it: at the default 15-second interval, `videos.list` plus
+    /// `channels.list` is roughly 5,700 units a day against a default
+    /// 10,000-unit project. The reserve that keeps message sending working
+    /// when reading has to stop was being computed from a number wrong by
+    /// more than half the budget.
+    ledger: crate::quota::QuotaStore,
     /// Where the Data API lives. Always [`API`] in the running program; the
     /// tests point it at a local server so real request behaviour — such as
     /// whether page tokens are followed — can be observed.
@@ -243,6 +253,7 @@ impl YouTubeBackend {
         access_token: String,
         reuse_stream: bool,
         preferred_stream_id: String,
+        ledger: crate::quota::QuotaStore,
     ) -> Self {
         Self {
             http,
@@ -254,6 +265,7 @@ impl YouTubeBackend {
             subscriber_cache: None,
             category_cache: None,
             quota: QuotaBackoff::default(),
+            ledger,
             base: API.to_string(),
             upload_base: UPLOAD_API.to_string(),
         }
@@ -268,6 +280,7 @@ impl YouTubeBackend {
     /// Fetch the authenticated user's own channel.
     async fn my_channel(&self) -> Result<ChannelResource> {
         let base = &self.base;
+        self.ledger.charge(crate::quota::cost::CHANNELS_LIST);
         let url = format!("{base}/channels?part=snippet,statistics&mine=true");
         let response = self
             .request(reqwest::Method::GET, &url)
@@ -968,6 +981,9 @@ impl Backend for YouTubeBackend {
             let mut hit_quota_error = false;
 
             let base = &self.base;
+            // Charged before the request is sent, because Google charges a
+            // failed request too.
+            self.ledger.charge(crate::quota::cost::VIDEOS_LIST);
             let url = format!(
                 "{base}/videos?part=liveStreamingDetails,statistics,status&id={}",
                 urlencoding::encode(&broadcast_id)
@@ -1500,11 +1516,41 @@ mod tests {
     /// streams, because `list_streams` fetched a single page. A channel with
     /// more stream objects than that had a perfectly valid pinned id reported
     /// as "does not exist on your channel".
+    /// The statistics poll is the biggest single quota consumer in the
+    /// program, and for a long time it charged nothing at all — so the
+    /// reserve that keeps message sending working was computed from a number
+    /// wrong by more than half the budget.
+    #[tokio::test]
+    async fn a_statistics_poll_is_charged_against_the_shared_ledger() {
+        let ledger = crate::quota::QuotaStore::new(10_000, None);
+        let before = ledger.remaining();
+
+        let mut backend = YouTubeBackend::new(
+            reqwest::Client::new(),
+            "token".into(),
+            true,
+            String::new(),
+            ledger.clone(),
+        );
+        // Points at a port nothing is listening on: the request fails, which
+        // is the point — Google charges a failed request too, so the charge
+        // happens before the send.
+        backend.base = "http://127.0.0.1:1".to_string();
+        backend.broadcast_id = Some("abc".into());
+
+        let _ = backend.fetch_stats().await;
+
+        assert!(
+            ledger.remaining() < before,
+            "a statistics poll has to be counted"
+        );
+    }
+
     #[tokio::test]
     async fn listing_streams_follows_page_tokens_to_the_end() {
         let (base, seen) = fake_data_api().await;
         let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new());
+            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
         backend.base = base;
 
         let streams = backend.list_streams().await.expect("the fake API answers");
@@ -1564,7 +1610,7 @@ mod tests {
 
     async fn backend_with(base: String, broadcast: Option<&str>) -> YouTubeBackend {
         let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new());
+            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
         backend.base = base;
         backend.broadcast_id = broadcast.map(|id| id.to_string());
         backend
@@ -2022,7 +2068,13 @@ mod tests {
             .timeout(StdDuration::from_millis(1))
             .build()
             .unwrap();
-        let mut backend = YouTubeBackend::new(offline, "token".into(), false, String::new());
+        let mut backend = YouTubeBackend::new(
+            offline,
+            "token".into(),
+            false,
+            String::new(),
+            crate::quota::QuotaStore::new(0, None),
+        );
 
         // Stand in for the one fetch a real session performs on first use.
         backend.category_cache = Some(vec![
@@ -2105,7 +2157,7 @@ mod tests {
     async fn a_quota_error_still_escalates_when_another_call_in_the_same_poll_succeeded() {
         let base = fake_api_with_exhausted_channel_quota().await;
         let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), false, String::new());
+            YouTubeBackend::new(reqwest::Client::new(), "token".into(), false, String::new(), crate::quota::QuotaStore::new(0, None));
         backend.base = base;
         backend.broadcast_id = Some("abc".into());
 
@@ -2198,7 +2250,7 @@ mod tests {
         });
 
         let mut backend =
-            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new());
+            YouTubeBackend::new(reqwest::Client::new(), "token".into(), true, String::new(), crate::quota::QuotaStore::new(0, None));
         backend.base = base;
 
         let err = backend

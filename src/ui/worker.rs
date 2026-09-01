@@ -135,6 +135,7 @@ pub async fn run(
     config: Config,
     mut commands: mpsc::Receiver<Command>,
     events: mpsc::UnboundedSender<Event>,
+    ledger: crate::quota::QuotaStore,
 ) {
     let mut config = config;
     let mut engine: Option<Engine> = None;
@@ -162,7 +163,7 @@ pub async fn run(
                     ),
                 });
 
-                match Engine::build(&config, &platforms).await {
+                match Engine::build(&config, &platforms, ledger.clone()).await {
                     Ok((mut built, failures)) => {
                         // A platform that failed to build (missing credentials,
                         // unrenewable login) is reported alongside the ones
@@ -450,7 +451,7 @@ pub async fn run(
                     level: LogLevel::Info,
                     message: "Looking for abandoned YouTube broadcasts…".into(),
                 });
-                match crate::maintenance::find_stale_broadcasts(&config).await {
+                match crate::maintenance::find_stale_broadcasts(&config, ledger.clone()).await {
                     Ok(stale) if stale.is_empty() => {
                         let _ = events.send(Event::Log {
                             level: LogLevel::Success,
@@ -476,7 +477,7 @@ pub async fn run(
                             ),
                         });
                     }
-                    Ok(stale) => match crate::maintenance::delete_broadcasts(&config, &stale).await
+                    Ok(stale) => match crate::maintenance::delete_broadcasts(&config, &stale, ledger.clone()).await
                     {
                         Ok(report) => {
                             for (title, reason) in &report.failed {
@@ -678,7 +679,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx.send(Command::Connect(vec![])).await.unwrap();
 
@@ -700,7 +706,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx
             .send(Command::GoLive {
@@ -731,7 +742,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx.send(Command::EndLive).await.unwrap();
 
@@ -756,7 +772,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx.send(Command::PollStats).await.unwrap();
         // Followed by something that does answer, so the test can tell
@@ -784,7 +805,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         // Connecting with no credentials still builds an engine — one whose
         // platforms all failed — which is enough to tell whether it survived.
@@ -832,7 +858,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx
             .send(Command::Connect(vec![Platform::Twitch]))
@@ -875,7 +906,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
         drop(command_tx);
 
         tokio::time::timeout(std::time::Duration::from_secs(5), handle)
@@ -893,7 +929,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx
             .send(Command::SearchCategories {
@@ -928,7 +969,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(4);
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
 
         command_tx.send(Command::PollStats).await.unwrap();
         drop(command_tx);
@@ -944,7 +990,12 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(1);
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
 
-        let handle = tokio::spawn(run(Config::default(), command_rx, event_tx));
+        let handle = tokio::spawn(run(
+            Config::default(),
+            command_rx,
+            event_tx,
+            crate::quota::QuotaStore::new(0, None),
+        ));
         drop(command_tx);
 
         // Completing at all proves the loop exits rather than hanging.

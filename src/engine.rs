@@ -48,6 +48,7 @@ impl Engine {
     pub async fn build(
         config: &Config,
         platforms: &[Platform],
+        ledger: crate::quota::QuotaStore,
     ) -> Result<(Self, Vec<(Platform, String)>)> {
         // One HTTP client shared by every backend, so connections are pooled
         // rather than re-established for each call.
@@ -85,6 +86,9 @@ impl Engine {
                     token,
                     config.youtube.reuse_stream,
                     config.youtube.stream_id.clone(),
+                    // The same ledger the chat pollers spend from, because
+                    // both spend from the same project allowance.
+                    ledger.clone(),
                 )),
             };
             backends.insert(platform, backend);
@@ -614,7 +618,11 @@ mod tests {
     async fn building_reports_each_platform_failure_separately() {
         let _scratch = crate::paths::test_support::ScratchConfigDir::new("engine-build");
 
-        let (engine, failures) = Engine::build(&Config::default(), &Platform::ALL)
+        let (engine, failures) = Engine::build(
+            &Config::default(),
+            &Platform::ALL,
+            crate::quota::QuotaStore::new(0, None),
+        )
             .await
             .expect("only a global failure may abort the build");
 

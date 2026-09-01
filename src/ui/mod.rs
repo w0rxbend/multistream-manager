@@ -205,10 +205,26 @@ pub async fn run(config: Config) -> Result<()> {
     let (command_tx, command_rx) = mpsc::channel(32);
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-    let worker = tokio::spawn(worker::run(config.clone(), command_rx, event_tx));
+    // One quota ledger for the whole program, created here because this is
+    // where the two halves that spend from it are wired together: the worker
+    // (statistics polls, broadcast creation) and the chat tab (chat polls and
+    // sending). Both spend from the same Google project allowance, so two
+    // ledgers would each grant the full daily budget — and, being persisted to
+    // the same file, would overwrite each other's count.
+    let ledger = crate::quota::QuotaStore::new(
+        config.chat.daily_quota_units,
+        crate::paths::config_dir().ok().map(|dir| dir.join("quota.json")),
+    );
+
+    let worker = tokio::spawn(worker::run(
+        config.clone(),
+        command_rx,
+        event_tx,
+        ledger.clone(),
+    ));
 
     let mut guard = TerminalGuard::new(config.appearance.mouse)?;
-    let mut app = App::new(config);
+    let mut app = App::with_ledger(config, ledger);
     // Start the OBS connection from inside the runtime, which is where
     // spawning a task is possible.
     app.connect_obs();

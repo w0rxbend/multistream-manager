@@ -33,6 +33,7 @@ mod notify;
 mod obs;
 mod paths;
 mod preflight;
+mod quota;
 mod telemetry;
 mod theme;
 mod twitch;

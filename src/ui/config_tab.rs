@@ -712,6 +712,42 @@ fn draw_chat(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
         Style::new().fg(sk.muted),
     )));
 
+    // What the day's YouTube spend estimate actually says. It decides when
+    // chat polling pauses, and until now nothing ever showed it — the first
+    // sign of trouble was polling stopping mid-stream.
+    lines.push(Line::from(""));
+    match app.chat.quota_summary() {
+        Some((used, limit, percent)) => {
+            let colour = if percent >= 90 {
+                sk.error
+            } else if percent >= 60 {
+                sk.warning
+            } else {
+                sk.muted
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  YouTube quota today: about {used} of {limit} units ({percent}%), \
+                     reserve {}%",
+                    chat.quota_reserve_percent
+                ),
+                Style::new().fg(colour),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  An estimate this program keeps, not a figure from Google. Chat",
+                Style::new().fg(sk.muted),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  polling pauses at the reserve so sending keeps working.",
+                Style::new().fg(sk.muted),
+            )));
+        }
+        None => lines.push(Line::from(Span::styled(
+            "  YouTube quota estimate is off (daily_quota_units = 0).",
+            Style::new().fg(sk.muted),
+        ))),
+    }
+
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 

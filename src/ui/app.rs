@@ -389,8 +389,25 @@ pub struct App {
 }
 
 impl App {
-    /// Build the initial state from the saved config.
+    /// Build the initial state from the saved config, with its own quota
+    /// ledger.
+    ///
+    /// Production goes through [`App::with_ledger`] instead, so that the
+    /// interface and the worker share one ledger; this is for tests and for
+    /// anywhere the spend does not matter.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(config: Config) -> Self {
+        let ledger = crate::quota::QuotaStore::new(
+            config.chat.daily_quota_units,
+            crate::paths::config_dir()
+                .ok()
+                .map(|dir| dir.join("quota.json")),
+        );
+        Self::with_ledger(config, ledger)
+    }
+
+    /// Build the initial state around an existing quota ledger.
+    pub fn with_ledger(config: Config, ledger: crate::quota::QuotaStore) -> Self {
         let preset = config.preset.clone();
         let plan = preset.to_plan();
 
@@ -493,7 +510,7 @@ impl App {
             theme_picker: None,
             palette,
             tab: Tab::StreamInfo,
-            chat: super::chat_tab::ChatTabState::new(&config, desktop.clone()),
+            chat: super::chat_tab::ChatTabState::new(&config, desktop.clone(), ledger),
             combined_focus: CombinedFocus::Chat,
             screen,
             config,

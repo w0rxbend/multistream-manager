@@ -165,7 +165,7 @@ pub struct ChatTabState {
     http: reqwest::Client,
     /// The one quota estimate every YouTube poller charges against, persisted
     /// across sessions (quota.json beside the config).
-    quota: crate::chat::youtube::QuotaStore,
+    quota: crate::quota::QuotaStore,
     /// A copy of the config, so composer commands (`/chats <x>`) can open
     /// chats without threading `&Config` through every key path.
     config: Config,
@@ -199,7 +199,7 @@ impl ChatTabState {
     /// A store that cannot be read is treated as "no accounts": the panes
     /// then show their empty-state hints, which include the commands that
     /// would also surface the underlying problem.
-    pub fn new(config: &Config, notifier: Notifier) -> Self {
+    pub fn new(config: &Config, notifier: Notifier, quota: crate::quota::QuotaStore) -> Self {
         let accounts = match TokenStore::load() {
             Ok(store) => discover_accounts(&store),
             Err(err) => {
@@ -222,12 +222,12 @@ impl ChatTabState {
             active_chat: BTreeMap::new(),
             events_tx,
             events_rx: Some(events_rx),
-            quota: crate::chat::youtube::QuotaStore::new(
-                config.chat.daily_quota_units,
-                crate::paths::config_dir()
-                    .ok()
-                    .map(|dir| dir.join("quota.json")),
-            ),
+            // Passed in rather than built here: the statistics polling spends
+            // from the same Google project allowance, so both halves have to
+            // count into one ledger. Two would each grant the full daily
+            // budget and, being persisted to the same file, overwrite each
+            // other's count.
+            quota,
             render: RenderOpts::default(),
             notifier,
             logger: build_logger(config),
@@ -481,6 +481,11 @@ impl ChatTabState {
     pub fn adopt_notification_settings(&mut self, config: &Config) {
         self.config.notifications = config.notifications.clone();
         self.config.chat.notifications = config.chat.notifications;
+    }
+
+    /// The day's YouTube quota estimate, for showing in Config → Chat.
+    pub fn quota_summary(&self) -> Option<(u64, u64, u8)> {
+        self.quota.summary()
     }
 
     /// Turn chat logging on or off while the program is running.
@@ -2000,7 +2005,7 @@ mod tests {
             events_tx: mpsc::unbounded_channel().0,
             events_rx: None,
             http: reqwest::Client::new(),
-            quota: crate::chat::youtube::QuotaStore::new(0, None),
+            quota: crate::quota::QuotaStore::new(0, None),
             config: Config::default(),
             render: RenderOpts::default(),
             notifier: Notifier::new(false),
