@@ -1402,26 +1402,49 @@ impl App {
     /// The row order is the one `draw_notifications` lists, and the two have
     /// to agree — a mismatch would silently toggle the wrong setting, so the
     /// list is short, in one place, and covered by a test.
+    /// Fire one notification through the real desktop path, right now.
+    ///
+    /// "Notifications do not work" is otherwise a thing you discover during a
+    /// raid. On Linux the delivery path tries notify-send, then gdbus, then
+    /// kdialog, then the terminal bell, and it is entirely reasonable not to
+    /// know which of those this machine has — so being able to ask is worth a
+    /// row of its own.
+    ///
+    /// It deliberately goes through `self.desktop` rather than round the
+    /// pacing and the master switch, because what is being tested is exactly
+    /// that path. If the master switch is off it says so instead, since a
+    /// silent test would be indistinguishable from a broken one.
+    fn send_test_notification(&mut self) -> Vec<Command> {
+        if !self.config.notifications.enabled {
+            self.notify(
+                super::toast::Level::Warning,
+                "Desktop notifications are switched off — turn the top row on first.",
+            );
+            return vec![];
+        }
+        self.desktop.send(crate::notify::Notification::new(
+            "multistream-manager",
+            "This is a test notification. If you can see it, they work.",
+            crate::notify::Urgency::Normal,
+        ));
+        self.notify(
+            super::toast::Level::Info,
+            "Test notification sent. Nothing on your desktop? Check Config → Diagnostics.",
+        );
+        vec![]
+    }
+
     fn change_notification_setting(&mut self) -> Vec<Command> {
         let Some(config) = self.config_tab.as_ref() else {
             return vec![];
         };
-        let settings = &mut self.config.notifications;
-        match config.cursor {
-            0 => settings.enabled = !settings.enabled,
-            1 => settings.raids = !settings.raids,
-            2 => settings.subscriptions = !settings.subscriptions,
-            3 => settings.cheers = !settings.cheers,
-            4 => settings.paid = !settings.paid,
-            5 => settings.memberships = !settings.memberships,
-            6 => settings.stream_state = !settings.stream_state,
-            7 => settings.only_when_hidden = !settings.only_when_hidden,
-            8 => settings.twitch_events = !settings.twitch_events,
-            9 => settings.follows = !settings.follows,
-            10 => settings.redemptions = !settings.redemptions,
-            11 => settings.hype_trains = !settings.hype_trains,
-            _ => settings.polls = !settings.polls,
-        }
+        // One lookup into the same table the section is drawn from, so a row
+        // added, removed or reordered can never rebind the switches below it.
+        let Some(row) = super::config_tab::NOTIFICATION_TABLE.get(config.cursor) else {
+            // Past the end of the switches is the test-notification row.
+            return self.send_test_notification();
+        };
+        (row.toggle)(&mut self.config.notifications);
 
         // The Twitch event switch is not a display filter: it decides whether
         // a second WebSocket is held open at all. Turning it on opens it now
@@ -5643,16 +5666,22 @@ mod tests {
     /// Cleanup lists before it deletes. Removing things somebody made
     /// without showing them first would be asking for trust this has no way
     /// Every switch in the Notifications section has to flip the setting the
-    /// row next to it names. The list lives in two places — the drawing code
-    /// and the key handler — and a mismatch would silently change the wrong
-    /// one, which is the sort of bug nobody reports because they assume they
-    /// misread the screen.
+    /// row next to it names.
+    ///
+    /// The rows and the toggles used to be two separate lists that had to
+    /// agree by convention, and this test was the only thing holding them
+    /// together. They are now one table, so this checks the table rather than
+    /// guarding a hazard — but it stays, because reading every switch through
+    /// the same table it drives would not prove the switches differ from one
+    /// another, and that is the property that matters.
     #[test]
     fn every_notification_switch_flips_the_setting_beside_it() {
         let mut app = app();
         go_to_config_section(&mut app, super::super::config_tab::Section::Notifications);
         app.handle_key(KeyEvent::from(KeyCode::Tab));
 
+        // Written out by hand rather than read through the table, so that a
+        // table whose rows all pointed at the same field would fail here.
         let read = |app: &App| {
             let n = &app.config.notifications;
             vec![
@@ -5669,10 +5698,18 @@ mod tests {
                 n.redemptions,
                 n.hype_trains,
                 n.polls,
+                n.predictions,
             ]
         };
+        assert_eq!(
+            read(&app).len(),
+            super::super::config_tab::NOTIFICATION_TABLE.len(),
+            "a switch was added to the table without being checked here"
+        );
         let before = read(&app);
-        for row in 0..super::super::config_tab::NOTIFICATION_ROWS {
+        // The switches only: the last row of the section fires a test
+        // notification and is not a setting.
+        for row in 0..super::super::config_tab::NOTIFICATION_TABLE.len() {
             let previous = read(&app);
             app.handle_key(KeyEvent::from(KeyCode::Enter));
             let now = read(&app);
@@ -5685,7 +5722,7 @@ mod tests {
             }
             app.handle_key(KeyEvent::from(KeyCode::Char('j')));
         }
-        // Eight rows, eight flips: nothing is where it started.
+        // Every row flipped once: nothing is where it started.
         let after = read(&app);
         assert!(before.iter().zip(after.iter()).all(|(a, b)| a != b));
     }

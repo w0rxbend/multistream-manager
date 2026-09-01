@@ -315,7 +315,8 @@ Linux-first and the Windows toast API is not worth the maintenance.
 | `follows` | boolean | `true` | New followers. |
 | `redemptions` | boolean | `true` | Channel-point redemptions, with whatever the viewer typed. |
 | `hype_trains` | boolean | `true` | Hype trains starting and finishing. |
-| `polls` | boolean | `true` | Polls and predictions starting. |
+| `polls` | boolean | `true` | Polls starting. |
+| `predictions` | boolean | `true` | Predictions starting. A prediction has channel points staked on it and has to be resolved before it locks, so it gets its own switch rather than sharing the poll one. |
 
 ```toml
 [notifications]
@@ -333,6 +334,7 @@ follows = true
 redemptions = true
 hype_trains = true
 polls = true
+predictions = true
 ```
 
 ### `twitch_events`: the second connection

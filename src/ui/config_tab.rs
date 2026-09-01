@@ -219,7 +219,123 @@ impl ConfigTab {
 pub const APPEARANCE_ROWS: usize = 7;
 
 /// How many switches the Notifications section lists.
-pub const NOTIFICATION_ROWS: usize = 13;
+/// One switchable notification setting.
+///
+/// The rows used to be written down twice: a list of labels in the drawing
+/// code, and a `match config.cursor { 0 => …, 1 => … }` in the key handler
+/// that had to stay in lockstep with it. Adding, removing or reordering a
+/// single row silently rebound every toggle below it — thirteen
+/// destructive-by-mistake settings held together by two lists agreeing by
+/// convention. One table that both halves walk makes the hazard impossible
+/// rather than merely tested for.
+pub struct NotificationRow {
+    /// What the row is called on screen. Two leading spaces indent the
+    /// settings that only work when Twitch events are being watched.
+    pub label: &'static str,
+    /// Read the current value.
+    pub get: fn(&crate::config::NotificationsConfig) -> bool,
+    /// Flip it.
+    pub toggle: fn(&mut crate::config::NotificationsConfig),
+}
+
+/// Every notification switch, in the order the section lists them.
+pub const NOTIFICATION_TABLE: &[NotificationRow] = &[
+    NotificationRow {
+        label: "Desktop notifications",
+        get: |n| n.enabled,
+        toggle: |n| n.enabled = !n.enabled,
+    },
+    NotificationRow {
+        label: "Raids",
+        get: |n| n.raids,
+        toggle: |n| n.raids = !n.raids,
+    },
+    NotificationRow {
+        label: "Subscriptions & gifts",
+        get: |n| n.subscriptions,
+        toggle: |n| n.subscriptions = !n.subscriptions,
+    },
+    NotificationRow {
+        label: "Cheers & bits",
+        get: |n| n.cheers,
+        toggle: |n| n.cheers = !n.cheers,
+    },
+    NotificationRow {
+        label: "Super Chats",
+        get: |n| n.paid,
+        toggle: |n| n.paid = !n.paid,
+    },
+    NotificationRow {
+        label: "Memberships",
+        get: |n| n.memberships,
+        toggle: |n| n.memberships = !n.memberships,
+    },
+    NotificationRow {
+        label: "Stream started/stopped",
+        get: |n| n.stream_state,
+        toggle: |n| n.stream_state = !n.stream_state,
+    },
+    NotificationRow {
+        label: "Only when chat is hidden",
+        get: |n| n.only_when_hidden,
+        toggle: |n| n.only_when_hidden = !n.only_when_hidden,
+    },
+    // Everything below needs the second Twitch connection, so the switch that
+    // opens it comes first and the rest are meaningless without it.
+    NotificationRow {
+        label: "Watch Twitch events",
+        get: |n| n.twitch_events,
+        toggle: |n| n.twitch_events = !n.twitch_events,
+    },
+    NotificationRow {
+        label: "  New followers",
+        get: |n| n.follows,
+        toggle: |n| n.follows = !n.follows,
+    },
+    NotificationRow {
+        label: "  Channel points",
+        get: |n| n.redemptions,
+        toggle: |n| n.redemptions = !n.redemptions,
+    },
+    NotificationRow {
+        label: "  Hype trains",
+        get: |n| n.hype_trains,
+        toggle: |n| n.hype_trains = !n.hype_trains,
+    },
+    NotificationRow {
+        label: "  Polls",
+        get: |n| n.polls,
+        toggle: |n| n.polls = !n.polls,
+    },
+    NotificationRow {
+        label: "  Predictions",
+        get: |n| n.predictions,
+        toggle: |n| n.predictions = !n.predictions,
+    },
+];
+
+/// The label of the row that fires a test notification.
+///
+/// Not a setting, so it is not in the table above — but it belongs in this
+/// section, because "my notifications do not work" is otherwise discovered
+/// during a raid, which is the worst possible moment to find out. The desktop
+/// path has four fallbacks on Linux and it is entirely reasonable not to know
+/// which one, if any, this machine has.
+pub const TEST_NOTIFICATION_LABEL: &str = "Send a test notification";
+
+/// The row index of the Twitch-events switch, which dims the ones below it.
+///
+/// Found rather than written down, so it cannot drift from the table.
+pub fn twitch_events_row() -> usize {
+    NOTIFICATION_TABLE
+        .iter()
+        .position(|row| row.label == "Watch Twitch events")
+        .expect("the Twitch events row is in the table")
+}
+
+/// How many rows the notifications section has: every switch, plus the
+/// test-notification row at the bottom.
+pub const NOTIFICATION_ROWS: usize = NOTIFICATION_TABLE.len() + 1;
 
 /// The housekeeping jobs, in the order they are listed.
 pub const MAINTENANCE_JOBS: [(&str, &str); 3] = [
@@ -462,26 +578,11 @@ fn draw_appearance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab)
 fn draw_notifications(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     let sk = theme::skin();
     let settings = &app.config.notifications;
-    let rows: [(&str, String); NOTIFICATION_ROWS] = [
-        ("Desktop notifications", on_off(settings.enabled)),
-        ("Raids", on_off(settings.raids)),
-        ("Subscriptions & gifts", on_off(settings.subscriptions)),
-        ("Cheers & bits", on_off(settings.cheers)),
-        ("Super Chats", on_off(settings.paid)),
-        ("Memberships", on_off(settings.memberships)),
-        ("Stream started/stopped", on_off(settings.stream_state)),
-        (
-            "Only when chat is hidden",
-            on_off(settings.only_when_hidden),
-        ),
-        // Everything below needs the second Twitch connection, so the switch
-        // that opens it comes first and the rest are meaningless without it.
-        ("Watch Twitch events", on_off(settings.twitch_events)),
-        ("  New followers", on_off(settings.follows)),
-        ("  Channel points", on_off(settings.redemptions)),
-        ("  Hype trains", on_off(settings.hype_trains)),
-        ("  Polls & predictions", on_off(settings.polls)),
-    ];
+    let mut rows: Vec<(&str, String)> = NOTIFICATION_TABLE
+        .iter()
+        .map(|row| (row.label, on_off((row.get)(settings))))
+        .collect();
+    rows.push((TEST_NOTIFICATION_LABEL, "press enter".into()));
 
     let mut lines: Vec<Line> = rows
         .iter()
@@ -492,7 +593,7 @@ fn draw_notifications(frame: &mut Frame, area: Rect, app: &App, config: &ConfigT
             // says so without hiding it: the master switch dims everything,
             // and the Twitch-events switch dims the four that need it.
             let dimmed = (index > 0 && !settings.enabled)
-                || (index > TWITCH_EVENTS_ROW && !settings.twitch_events);
+                || (index > twitch_events_row() && !settings.twitch_events);
             let name_colour = if dimmed { sk.muted } else { sk.foreground };
             let value_colour = if dimmed { sk.muted } else { sk.accent };
             let mut line = Line::from(vec![
@@ -537,7 +638,6 @@ fn draw_notifications(frame: &mut Frame, area: Rect, app: &App, config: &ConfigT
 
 /// Which row opens the Twitch event connection. The four rows after it are
 /// its children.
-const TWITCH_EVENTS_ROW: usize = 8;
 
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.to_string()

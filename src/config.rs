@@ -795,8 +795,15 @@ pub struct NotificationsConfig {
     pub redemptions: bool,
     /// Hype trains starting and finishing.
     pub hype_trains: bool,
-    /// Polls and predictions starting.
+    /// Polls starting.
     pub polls: bool,
+    /// Predictions starting.
+    ///
+    /// Its own switch rather than sharing the poll one. A poll is a bit of
+    /// fun; a prediction has channel points staked on it and has to be
+    /// resolved before it locks, which is a different level of "tell me about
+    /// this now".
+    pub predictions: bool,
 }
 
 impl Default for NotificationsConfig {
@@ -818,6 +825,7 @@ impl Default for NotificationsConfig {
             redemptions: true,
             hype_trains: true,
             polls: true,
+            predictions: true,
         }
     }
 }
@@ -830,7 +838,8 @@ impl NotificationsConfig {
             EventKind::Follow => self.follows,
             EventKind::Redemption => self.redemptions,
             EventKind::HypeTrain => self.hype_trains,
-            EventKind::Poll | EventKind::Prediction => self.polls,
+            EventKind::Poll => self.polls,
+            EventKind::Prediction => self.predictions,
         }
     }
 
