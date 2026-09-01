@@ -184,7 +184,33 @@ pub fn run(config: &Config) -> Vec<Check> {
                 ));
             } else {
                 for platform in authorised {
-                    checks.push(Check::ok(auth::describe(platform, store.get(platform))));
+                    let tokens = store.get(platform);
+                    let summary = auth::describe(platform, tokens);
+                    // A token past its expiry read `[ ok ] Twitch logged in,
+                    // token valid for expired`, which is a green tick on the
+                    // exact thing that is wrong. The refresh token is what
+                    // decides whether it matters.
+                    let expired = tokens.is_some_and(|tokens| {
+                        tokens
+                            .expires_at
+                            .is_some_and(|at| at <= chrono::Utc::now())
+                    });
+                    let renewable = tokens.is_some_and(|tokens| tokens.refresh_token.is_some());
+                    checks.push(match (expired, renewable) {
+                        (false, _) => Check::ok(summary),
+                        (true, true) => Check::warning(
+                            summary,
+                            "The token has expired but can renew itself; the next request will \
+                             do it. Nothing to do."
+                                .to_string(),
+                        ),
+                        (true, false) => Check::failed(
+                            summary,
+                            "The token has expired and there is no refresh token behind it. \
+                             Log in again under Config → Accounts."
+                                .to_string(),
+                        ),
+                    });
                 }
             }
         }

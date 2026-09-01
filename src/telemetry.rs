@@ -86,7 +86,11 @@ impl Telemetry {
         if let Some(memory) = self.memory_mb {
             parts.push(format!("mem {memory:.0}MB"));
         }
-        parts.push(format!("{}fps", self.fps()));
+        // "draws/s", not "fps": this counts frames this program painted, and
+        // an idle healthy program paints twice a second on purpose. Labelled
+        // `fps` it read as a performance figure and looked alarming beside
+        // real cpu and memory numbers.
+        parts.push(format!("{}draws/s", self.fps()));
         if parts.is_empty() {
             None
         } else {
@@ -193,7 +197,7 @@ mod tests {
         let mut telemetry = Telemetry::default();
         telemetry.record_frame(Instant::now());
         let summary = telemetry.summary().expect("a summary");
-        assert!(summary.contains("fps"), "got {summary:?}");
+        assert!(summary.contains("draws/s"), "got {summary:?}");
     }
 
     /// A second sample after real work has to produce a usable figure.

@@ -350,6 +350,28 @@ impl Field {
     }
 }
 
+/// Turn a leading `~` into the home directory.
+///
+/// A shell does this before the program ever sees the path, so a path typed
+/// into a form here is the one place it does not happen — and
+/// `~/pics/thumb.png` failed with "there is no file at ~/pics/thumb.png",
+/// which reads like the file is missing rather than like the path was never
+/// expanded. Worse, it failed at submit time, after go-live was pressed.
+pub fn expand_home(path: &str) -> String {
+    let Some(rest) = path.strip_prefix('~') else {
+        return path.to_string();
+    };
+    // `~name` is another user's home and is not something this can resolve;
+    // leaving it alone is better than guessing.
+    if !rest.is_empty() && !rest.starts_with('/') {
+        return path.to_string();
+    }
+    match std::env::var_os("HOME") {
+        Some(home) => format!("{}{rest}", home.to_string_lossy()),
+        None => path.to_string(),
+    }
+}
+
 /// YouTube's own ceiling on a thumbnail file, in bytes.
 pub const YOUTUBE_THUMBNAIL_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -584,7 +606,8 @@ impl StreamPlan {
             // is finding it out too late to fix quietly.
             let path = self.thumbnail_path.trim();
             if !path.is_empty() {
-                let file = std::path::Path::new(path);
+                let expanded = expand_home(path);
+                let file = std::path::Path::new(&expanded);
                 let extension = file
                     .extension()
                     .map(|ext| ext.to_string_lossy().to_ascii_lowercase())

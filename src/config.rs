@@ -336,15 +336,47 @@ impl KeysConfig {
                 // gets turned off. There has to be a way to say "nothing
                 // here" that is not "bind it to something harmless".
                 if action_name.trim().is_empty() {
-                    keymap.unbind(context, &chord);
+                    if !keymap.unbind(context, &chord) {
+                        // Name where it *is* bound. Unbinding a chord that is
+                        // not in this context is silent otherwise, and the
+                        // key carries on working — which reads as the setting
+                        // being ignored.
+                        let elsewhere = keymap.contexts_binding(&chord);
+                        let where_it_lives = if elsewhere.is_empty() {
+                            "it is not bound anywhere".to_string()
+                        } else {
+                            format!(
+                                "it is bound under {}",
+                                elsewhere
+                                    .iter()
+                                    .map(|context| format!("[keys.{}]", context.name()))
+                                    .collect::<Vec<_>>()
+                                    .join(" and ")
+                            )
+                        };
+                        problems.push(format!(
+                            "[keys.{}] {written:?} is not bound there, so removing it did \
+                             nothing — {where_it_lives}",
+                            context.name()
+                        ));
+                    }
                     continue;
                 }
                 match Action::parse(action_name) {
                     Some(action) => keymap.bind(context, chord, action),
-                    None => problems.push(format!(
-                        "[keys.{}] {written:?}: there is no action called {action_name:?}",
-                        context.name()
-                    )),
+                    None => {
+                        // `Action::ALL` is right here, so a near miss can be
+                        // named rather than leaving somebody to search the
+                        // documentation for a typo.
+                        let suggestion = closest_action(action_name)
+                            .map(|name| format!("; did you mean {name:?}?"))
+                            .unwrap_or_default();
+                        problems.push(format!(
+                            "[keys.{}] {written:?}: there is no action called \
+                             {action_name:?}{suggestion}",
+                            context.name()
+                        ));
+                    }
                 }
             }
         }
@@ -1117,6 +1149,41 @@ const POLL_INTERVAL_MIN_SECS: u64 = 5;
 
 /// …and the slowest, beyond which the dashboard is not really live.
 const POLL_INTERVAL_MAX_SECS: u64 = 3600;
+
+/// The action name closest to `typed`, when one is close enough to be worth
+/// suggesting.
+///
+/// Levenshtein distance, capped at a third of the name's length so a wild
+/// guess is not offered as a correction — "did you mean" is only useful when
+/// it usually is.
+fn closest_action(typed: &str) -> Option<&'static str> {
+    let typed = typed.trim().to_ascii_lowercase();
+    crate::keys::Action::ALL
+        .iter()
+        .map(|action| (edit_distance(&typed, action.name()), action.name()))
+        .filter(|(distance, name)| *distance <= (name.len() / 3).max(2))
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, name)| name)
+}
+
+/// Levenshtein distance, two rows at a time.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut previous: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut current = vec![0usize; b_chars.len() + 1];
+
+    for (i, ca) in a.chars().enumerate() {
+        current[0] = i + 1;
+        for (j, cb) in b_chars.iter().enumerate() {
+            let cost = usize::from(ca != *cb);
+            current[j + 1] = (previous[j] + cost)
+                .min(previous[j + 1] + 1)
+                .min(current[j] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[b_chars.len()]
+}
 
 /// When to hide what must not be captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

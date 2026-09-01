@@ -88,8 +88,25 @@ impl Keymap {
 
     /// Remove a binding, which is what an empty action name in the config
     /// means.
-    pub fn unbind(&mut self, context: Context, chord: &[Key]) {
-        self.bindings.remove(&(context, chord.to_vec()));
+    /// Remove a binding, reporting whether there was one.
+    ///
+    /// The answer matters: `[keys.global] "q" = ""` looks like it turns off
+    /// quitting and does nothing at all, because `q` is bound in
+    /// `stream_info`, `chat`, `obs` and `config` rather than globally. The
+    /// removal silently hit nothing and `q` still quit.
+    pub fn unbind(&mut self, context: Context, chord: &[Key]) -> bool {
+        self.bindings.remove(&(context, chord.to_vec())).is_some()
+    }
+
+    /// Every context in which `chord` is bound to something.
+    ///
+    /// Used to explain an unbind that hit nothing, by naming where the chord
+    /// actually lives.
+    pub fn contexts_binding(&self, chord: &[Key]) -> Vec<Context> {
+        Context::ALL
+            .into_iter()
+            .filter(|context| self.bindings.contains_key(&(*context, chord.to_vec())))
+            .collect()
     }
 
     /// What a chord does in a context, if anything.

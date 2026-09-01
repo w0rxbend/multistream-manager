@@ -1679,6 +1679,19 @@ impl App {
                 self.config.appearance.terminal_background =
                     !self.config.appearance.terminal_background
             }
+            7 => {
+                // Round the useful values rather than one second at a time:
+                // this is a setting somebody adjusts twice and then leaves,
+                // and the file still takes any number in the range.
+                const STEPS: [u64; 5] = [2, 3, 5, 8, 12];
+                let current = self.config.appearance.toast_seconds;
+                let next = STEPS
+                    .iter()
+                    .find(|step| **step > current)
+                    .copied()
+                    .unwrap_or(STEPS[0]);
+                self.config.appearance.toast_seconds = next;
+            }
             _ => {
                 // Three-way rather than a switch: "auto" is the useful
                 // default and the other two are for machines this program
@@ -3472,8 +3485,14 @@ impl App {
         // pointer is not the thing being drawn there. Scrolling still works,
         // since a long list is exactly what a wheel is for, but a click would
         // land on whatever happened to be underneath.
-        let overlay_open =
-            self.splash_is_showing() || self.toasts.history_open || self.theme_picker.is_some();
+        // The splash says "press any key to skip". A click is a deliberate
+        // "get on with it" too, and dropping it made the promise half true.
+        if self.splash_is_showing() {
+            self.splash_skipped = true;
+            return vec![];
+        }
+
+        let overlay_open = self.toasts.history_open || self.theme_picker.is_some();
 
         let action = super::mouse::action_for(
             event,

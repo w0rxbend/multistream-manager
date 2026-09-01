@@ -233,7 +233,7 @@ impl ConfigTab {
 }
 
 /// How many settings the Appearance section lists.
-pub const APPEARANCE_ROWS: usize = 8;
+pub const APPEARANCE_ROWS: usize = 9;
 
 /// How many switches the Notifications section lists.
 /// One switchable notification setting.
@@ -556,6 +556,10 @@ fn draw_appearance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab)
         (
             "Terminal background",
             on_off(appearance.terminal_background),
+        ),
+        (
+            "Pop-up seconds",
+            format!("{} (enter cycles)", appearance.toast_seconds),
         ),
         (
             "Streamer mode",

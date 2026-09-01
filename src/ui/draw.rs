@@ -2155,7 +2155,7 @@ mod tests {
         assert!(!render(&app, 100, 30).contains("fps"));
 
         app.config.appearance.telemetry = true;
-        assert!(render(&app, 100, 30).contains("fps"));
+        assert!(render(&app, 100, 30).contains("draws/s"));
     }
 
     /// It shares the tab bar's row, so it must not push the tab labels off

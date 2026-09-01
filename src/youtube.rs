@@ -859,9 +859,11 @@ impl Backend for YouTubeBackend {
             // is a note rather than an abort: the broadcast exists and is
             // bound, and a wrong picture is worth far less than a lost
             // stream.
-            let thumbnail = plan.thumbnail_path.trim();
+            // Expanded the same way validation expanded it, or the upload
+            // would look for a directory literally named `~`.
+            let thumbnail = crate::model::expand_home(plan.thumbnail_path.trim());
             if !thumbnail.is_empty() {
-                match self.set_thumbnail(&broadcast.id, thumbnail).await {
+                match self.set_thumbnail(&broadcast.id, &thumbnail).await {
                     Ok(()) => notes.push("Thumbnail uploaded.".to_string()),
                     Err(err) => notes.push(format!(
                         "Warning: the broadcast is ready, but the thumbnail could not be \
