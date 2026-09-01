@@ -37,7 +37,9 @@ understand why a particular failure looks the way it does.
 | `src/ui/app.rs` | All interface state and keyboard handling. Pure state transitions, no I/O. |
 | `src/ui/worker.rs` | The background task that performs the slow API work, so the interface never freezes. |
 | `src/ui/draw.rs` | Rendering. Reads state, never mutates it. |
-| `src/main.rs` | Argument parsing and the non-interactive commands. |
+| `src/main.rs` | Argument parsing (`--version`, `--help`), logging setup, and handing the config to the interface. |
+| `src/preflight.rs` | The pass/warn/fail checks run before going live. Pure — no network, no `async`. |
+| `src/health.rs` | The per-destination health strip in the header. Also pure. |
 | `src/paths.rs` | Where files live, and writing them with owner-only permissions. |
 | `src/lang.rs` | The language list behind the language field's search. |
 

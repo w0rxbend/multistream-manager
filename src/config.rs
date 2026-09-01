@@ -22,9 +22,12 @@ pub struct Config {
     /// Where this config was read from, so `save()` writes back to the same
     /// file. Not part of the file format itself.
     ///
-    /// Without this, `--config ~/streams/coding.toml` would load from that file
-    /// but save to the default one — quietly writing the preset, and a copy of
-    /// the client secrets, into the wrong place.
+    /// In production this is always the path `paths::config_file()` names, and
+    /// `MSM_CONFIG_DIR` is how that is redirected. It is a field rather than a
+    /// call so that a save can never write somewhere other than where the load
+    /// read — which is how a preset, and a copy of the client secrets, would
+    /// quietly end up in the wrong file — and so the tests can point a whole
+    /// load/save cycle at a scratch file.
     #[serde(skip)]
     pub source_path: Option<std::path::PathBuf>,
     pub twitch: TwitchConfig,

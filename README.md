@@ -210,9 +210,9 @@ opens:
 msm
 ```
 
-There are no options to pass it. If you type one anyway, it prints a short note
-saying so and where each tab is, rather than starting up as though it had been
-understood.
+The only options are `--version` and `--help`; both print and exit. Anything
+else prints the help to standard error and exits with status 2, rather than
+starting up as though the argument had been understood.
 
 **Container** — no toolchain needed; the image compiles from source and ships one
 binary on a bare Debian base (about 140MB):

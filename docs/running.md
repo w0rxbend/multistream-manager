@@ -25,9 +25,10 @@ condensed version and the reference you come back to.
 msm
 ```
 
-That is the whole interface. There are no subcommands and no flags — if you
-type one, it prints a short note saying so and where each tab is, rather than
-starting as though the argument had been understood.
+That is the whole interface. There are no subcommands, and the only two flags
+are `--version` and `--help`, which print and exit. Anything else prints the
+help to standard error and exits with status 2, rather than starting as though
+the argument had been understood.
 
 Five tabs, switched with <kbd>Alt</kbd> and a number:
 

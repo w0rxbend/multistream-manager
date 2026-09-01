@@ -5,10 +5,12 @@ the interface opens, and everything the program can do is somewhere inside it.
 This page is the reference for reaching those things from the keyboard, and for
 changing which key reaches what.
 
-If you type an option anyway — `msm --help`, `msm login`, anything at all — the
-program prints a short note saying there are no options and where each tab is,
-then exits without opening the interface. That is deliberate: starting up as
-though nothing had been typed would look like the argument had been understood.
+There are two options, and both print and exit rather than opening the
+interface: `--version` (or `-V`) prints the version, and `--help` (or `-h`)
+prints a short note saying where each tab is. Anything else — `msm login`, a
+mistyped flag — prints that same note to standard error and exits with status
+2. That is deliberate: starting up as though nothing had been typed would look
+like the argument had been understood.
 
 **Contents**
 
