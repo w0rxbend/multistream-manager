@@ -472,6 +472,14 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Chat, ">",           Action::ChatNarrow),
     (Context::Chat, "=",           Action::ChatResetPanes),
     (Context::Chat, "<C-r>",       Action::ChatReconnect),
+    // The presentation toggles. These were literal key matches with no
+    // action, so they were in no list anywhere — not which-key, not the full
+    // binding map, not the palette — and could not be rebound.
+    (Context::Chat, "<C-g>",       Action::ChatCycleLayout),
+    (Context::Chat, "<C-b>",       Action::ChatCycleBadges),
+    (Context::Chat, "<C-y>",       Action::ChatToggleEmoteHighlight),
+    (Context::Chat, "<C-n>",       Action::ChatToggleFullUsername),
+    (Context::Chat, "<C-t>",       Action::ChatToggleTimestamps),
     (Context::Chat, "<C-e>",       Action::ChatEmojiPicker),
     (Context::Chat, "q",           Action::Quit),
 

@@ -1069,6 +1069,11 @@ impl App {
             // the whole reason a bookmark in the VOD beats scrubbing for it
             // later.
             Action::ChatMarker => self.chat.mark_moment(),
+            Action::ChatCycleLayout => self.chat.cycle_layout(),
+            Action::ChatCycleBadges => self.chat.cycle_badges(),
+            Action::ChatToggleEmoteHighlight => self.chat.toggle_highlight(),
+            Action::ChatToggleFullUsername => self.chat.toggle_full_username(),
+            Action::ChatToggleTimestamps => self.chat.toggle_timestamps(),
             Action::StreamNextProfile => return self.next_profile(),
 
             // The Config tab's own keys, as named actions rather than the
@@ -3307,10 +3312,6 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('r') => self.chat.reconnect_active(),
-                KeyCode::Char('g') => self.chat.cycle_layout(),
-                KeyCode::Char('b') => self.chat.cycle_badges(),
-                KeyCode::Char('y') => self.chat.toggle_highlight(),
-                KeyCode::Char('n') => self.chat.toggle_full_username(),
                 // Same guard as entering the composer: with no chat open
                 // there is no draft an emoji could land in.
                 KeyCode::Char('e') if self.chat.active_key(self.chat.focus).is_some() => {

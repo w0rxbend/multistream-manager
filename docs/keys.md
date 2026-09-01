@@ -197,6 +197,11 @@ letter goes to that and find keeps `f`.
 | <kbd>c</kbd> <kbd>j</kbd> | `chat.join` | Join a channel |
 | <kbd>c</kbd> <kbd>x</kbd> | `chat.close` | Close this chat |
 | `chat.marker` | Mark this moment in the VOD |
+| `chat.layout` | Cycle the message layout |
+| `chat.badges` | Cycle how badges are drawn |
+| `chat.emote_highlight` | Highlight emotes and emoji |
+| `chat.full_username` | Show the login beside the display name |
+| `chat.timestamps` | Show message timestamps |
 | <kbd>c</kbd> <kbd>m</kbd> | `chat.marker` | Mark this moment in the VOD |
 | `config.next_section` | Next setting or section |
 | `config.previous_section` | Previous setting or section |

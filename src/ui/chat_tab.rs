@@ -122,6 +122,12 @@ pub enum ComposeEdit {
     Clear,
 }
 
+/// How many rows of context to leave below a search match.
+///
+/// A match pinned to the bottom row answers "was it said" and not "what
+/// happened next", which is most of why anybody searches a chat log.
+const SEARCH_CONTEXT_ROWS: usize = 6;
+
 /// How many emoji candidates the picker offers.
 ///
 /// Shared by the drawing and the key handling, so the selection cursor can
@@ -652,6 +658,8 @@ impl ChatTabState {
             }
             chat.state.scroll = 0;
             chat.state.below = 0;
+            // Jumping to live is "I have caught up", so the divider goes.
+            chat.state.clear_unread_mark();
         }
     }
 
@@ -977,6 +985,14 @@ impl ChatTabState {
         self.render.highlight_emotes = !self.render.highlight_emotes;
     }
 
+    /// Show or hide the timestamp column.
+    ///
+    /// `RenderOpts.timestamps` was a real switch with no key at all — the
+    /// only way to change it was not to.
+    pub fn toggle_timestamps(&mut self) {
+        self.render.timestamps = !self.render.timestamps;
+    }
+
     pub fn toggle_full_username(&mut self) {
         self.render.full_username = !self.render.full_username;
     }
@@ -1075,7 +1091,12 @@ impl ChatTabState {
                 // jump would land on an invisible row.
                 if search_matches(msg, &needle) && filters.matches(msg, &login) {
                     chat.state.cursor = Some(offset);
-                    chat.state.scroll = offset;
+                    // Scrolled a little past the match, so it lands about a
+                    // third up the pane with what followed it underneath.
+                    // Setting `scroll = offset` put the match on the very
+                    // bottom row with nothing after it, and "what did they
+                    // say next" is most of why you searched.
+                    chat.state.scroll = offset.saturating_sub(SEARCH_CONTEXT_ROWS);
                     return;
                 }
             }
@@ -1131,7 +1152,9 @@ impl ChatTabState {
                     .expect("offset < len by loop guard");
                 if search_matches(msg, &needle) && filters.matches(msg, &login) {
                     chat.state.cursor = Some(offset);
-                    chat.state.scroll = offset;
+                    // Same context as the initial jump, so stepping through
+                    // matches reads the same way as landing on the first.
+                    chat.state.scroll = offset.saturating_sub(SEARCH_CONTEXT_ROWS);
                     return;
                 }
             }
@@ -1609,8 +1632,26 @@ fn draw_chat_strip(frame: &mut Frame, area: Rect, state: &ChatTabState, platform
             spans.push(Span::styled(" (0 clears)", Style::default().fg(sk.muted)));
         }
         if !chat.state.search.is_empty() {
+            // How many, and which one you are on. "How far back was that" is
+            // the question a chat search is asked, and a bare term answered
+            // none of it.
+            let needle = chat.state.search.to_lowercase();
+            let matches: Vec<usize> = (0..chat.state.messages.len())
+                .filter(|offset| {
+                    chat.state
+                        .messages
+                        .get(chat.state.messages.len() - 1 - offset)
+                        .is_some_and(|msg| search_matches(msg, &needle))
+                })
+                .collect();
+            let position = chat
+                .state
+                .cursor
+                .and_then(|cursor| matches.iter().position(|offset| *offset == cursor))
+                .map(|index| format!("{}/", index + 1))
+                .unwrap_or_default();
             spans.push(Span::styled(
-                format!(" · /{}", chat.state.search),
+                format!(" · /{} {position}{}", chat.state.search, matches.len()),
                 Style::default().fg(sk.warning),
             ));
         }
@@ -1823,6 +1864,9 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
     };
 
     let mut opts = state.render.clone();
+    // The committed search term, so matches are tinted where they sit rather
+    // than only located by moving the selection onto them.
+    opts.search_needle = chat.state.search.clone();
     let height = area.height as usize;
     let len = chat.state.messages.len();
     let newest_visible = len.saturating_sub(chat.state.scroll);
@@ -1890,6 +1934,18 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
         }
         rendered.reverse();
         lines.extend(rendered);
+
+        // The line between what you had read and what arrived while you were
+        // looking elsewhere. Pushed after the message because the walk is
+        // backwards and the whole list is reversed at the end, so this lands
+        // *above* the first new message.
+        if chat.state.unread_mark == Some(index) {
+            let rule = "─".repeat(usize::from(area.width).saturating_sub(24).max(4));
+            lines.push(Line::from(Span::styled(
+                format!("{rule} new since you last looked "),
+                Style::default().fg(sk.warning),
+            )));
+        }
     }
     lines.truncate(height);
     lines.reverse();

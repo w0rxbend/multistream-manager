@@ -588,6 +588,12 @@ pub struct RenderOpts {
     /// uses it to suppress the repeated author header so a run of messages
     /// reads as one block under a single name (twi ContinuesGroup).
     pub continues_group: bool,
+    /// The committed search term, so matches can be picked out in the text.
+    ///
+    /// Searching moved the selection to a match and left the reader to find
+    /// the word themselves — in a wrapped message on a wide pane that is real
+    /// work, and it is the one thing the program knew and did not say.
+    pub search_needle: String,
     /// This message matched a highlight rule.
     ///
     /// Drawn like a mention, because it means the same thing to the reader:
@@ -614,6 +620,7 @@ impl Default for RenderOpts {
             highlight_emotes: true,
             full_username: false,
             continues_group: false,
+            search_needle: String::new(),
             highlighted: false,
             mentions_me: false,
         }
@@ -637,6 +644,15 @@ fn shortcode_highlight() -> Color {
 
 fn emoji_highlight() -> Color {
     tint_toward(crate::theme::skin().warning)
+}
+
+/// The ground behind a search match.
+///
+/// Tinted toward the accent rather than the warning colour that marks
+/// emotes, so a search inside a message full of emotes still stands out from
+/// them.
+fn search_highlight() -> Color {
+    tint_toward(crate::theme::skin().accent)
 }
 
 /// Blend `toward` into the theme canvas by [`HIGHLIGHT_TINT`].
@@ -1094,6 +1110,8 @@ fn content_pieces(msg: &ChatMessage, opts: &RenderOpts) -> Vec<Piece> {
     } else {
         Modifier::empty()
     };
+    // Split the body further on the search term, so a match can be tinted
+    // where it sits rather than only marked by the selection.
     for frag in split_fragments(&msg.text) {
         let (style, atomic) = match frag.kind {
             FragKind::Text => (
@@ -1127,11 +1145,46 @@ fn content_pieces(msg: &ChatMessage, opts: &RenderOpts) -> Vec<Piece> {
                 (style, true)
             }
         };
-        pieces.push(Piece {
-            text: frag.text,
-            style,
-            atomic,
-        });
+        // Tint the search term where it appears, rather than leaving the
+        // reader to find it themselves in a wrapped message on a wide pane.
+        // The fragment is split around each occurrence so only the matching
+        // run is marked.
+        let needle = opts.search_needle.to_lowercase();
+        if needle.is_empty() || !frag.text.to_lowercase().contains(&needle) {
+            pieces.push(Piece {
+                text: frag.text,
+                style,
+                atomic,
+            });
+            continue;
+        }
+
+        let lowered = frag.text.to_lowercase();
+        let mut cut = 0usize;
+        while let Some(at) = lowered[cut..].find(&needle) {
+            let start = cut + at;
+            let end = start + needle.len();
+            if start > cut {
+                pieces.push(Piece {
+                    text: frag.text[cut..start].to_string(),
+                    style,
+                    atomic,
+                });
+            }
+            pieces.push(Piece {
+                text: frag.text[start..end].to_string(),
+                style: style.bg(search_highlight()).add_modifier(Modifier::BOLD),
+                atomic: true,
+            });
+            cut = end;
+        }
+        if cut < frag.text.len() {
+            pieces.push(Piece {
+                text: frag.text[cut..].to_string(),
+                style,
+                atomic,
+            });
+        }
     }
     pieces
 }

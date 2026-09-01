@@ -123,6 +123,12 @@ pub struct ChatState {
     /// words back required backspacing over everything after it, in the one
     /// text box the user spends a whole stream in.
     pub draft: crate::ui::input::TextInput,
+    /// How many messages there were when the pane was last hidden.
+    ///
+    /// `None` means there is nothing new to divide off. Counted rather than
+    /// stored as an id so the ring evicting old messages cannot leave it
+    /// pointing at something that is gone.
+    pub unread_mark: Option<usize>,
     /// How many new messages have arrived while the view was held still.
     ///
     /// `scroll > 0` means the reader is in history and the view is frozen
@@ -202,6 +208,7 @@ impl ChatState {
             scroll: 0,
             connection: (ConnectionStatus::Connecting, String::new()),
             draft: crate::ui::input::TextInput::default(),
+            unread_mark: None,
             below: 0,
             sent: std::collections::VecDeque::new(),
             recall: None,
@@ -223,7 +230,23 @@ impl ChatState {
 
     /// The chat left the screen: new messages count as unread again.
     pub fn mark_hidden(&mut self) {
+        // Only on the transition. `refresh_visibility` calls this for every
+        // off-screen chat on every pass, so setting the mark unconditionally
+        // would keep pushing it forward to "now" and leave nothing divided
+        // off at all.
+        if self.viewed {
+            // Where the chat had got to when you looked away, so what
+            // arrived since can be marked. Coming back to a busy chat with no
+            // line between "read" and "new" means scrolling until something
+            // looks familiar.
+            self.unread_mark = Some(self.messages.len());
+        }
         self.viewed = false;
+    }
+
+    /// Forget the divider, once the new messages have been seen.
+    pub fn clear_unread_mark(&mut self) {
+        self.unread_mark = None;
     }
 
     /// Remember a message that has just been sent, for Up/Down recall.
@@ -658,6 +681,31 @@ mod tests {
     /// A held view with messages piling up underneath looked exactly like a
     /// quiet chat. The state knew — it was already growing `scroll` to hold
     /// the view still — and did not count.
+    /// Coming back to a busy chat with no line between "read" and "new"
+    /// means scrolling until something looks familiar.
+    #[test]
+    fn the_unread_divider_marks_where_you_left_off() {
+        let mut state = ChatState::new(&config(100));
+        state.mark_viewed();
+        for i in 0..3 {
+            deliver(&mut state, msg(&format!("m{i}"), "someone", "read"));
+        }
+
+        state.mark_hidden();
+        assert_eq!(state.unread_mark, Some(3), "the mark is where you left off");
+
+        // Hiding again must not push the mark forward: `refresh_visibility`
+        // calls this for every off-screen chat on every pass, and a mark that
+        // kept moving to "now" would divide nothing off at all.
+        deliver(&mut state, msg("m3", "someone", "new"));
+        state.mark_hidden();
+        assert_eq!(state.unread_mark, Some(3), "still where you left off");
+
+        // Catching up clears it.
+        state.clear_unread_mark();
+        assert_eq!(state.unread_mark, None);
+    }
+
     #[test]
     fn messages_arriving_behind_a_held_view_are_counted() {
         let mut state = ChatState::new(&config(100));
