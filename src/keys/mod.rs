@@ -337,6 +337,20 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Global, "<Leader>sY", Action::CopyYouTubeKey),
     (Context::Global, "<Leader>so", Action::OpenWatchPage),
 
+    // The Config tab. These were hardcoded key matches until they became
+    // actions, which is what makes them rebindable and what puts them in
+    // which-key, <Leader>? and the command palette.
+    (Context::Config, "j",              Action::ConfigNextSection),
+    (Context::Config, "<Down>",         Action::ConfigNextSection),
+    (Context::Config, "k",              Action::ConfigPreviousSection),
+    (Context::Config, "<Up>",           Action::ConfigPreviousSection),
+    (Context::Config, "<Tab>",          Action::ConfigSwapPane),
+    (Context::Config, "h",              Action::ConfigSwapPane),
+    (Context::Config, "l",              Action::ConfigSwapPane),
+    (Context::Config, "<Enter>",        Action::ConfigActivate),
+    (Context::Config, "a",              Action::ConfigAddAccount),
+    (Context::Config, "r",              Action::ConfigRefreshChecks),
+
     // <Leader>c — chat.
     (Context::Global, "<Leader>cc", Action::ChatCompose),
     (Context::Global, "<Leader>cj", Action::ChatJoin),

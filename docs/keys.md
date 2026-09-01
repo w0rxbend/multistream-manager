@@ -191,6 +191,12 @@ letter goes to that and find keeps `f`.
 | <kbd>c</kbd> <kbd>c</kbd> | `chat.compose` | Write a message |
 | <kbd>c</kbd> <kbd>j</kbd> | `chat.join` | Join a channel |
 | <kbd>c</kbd> <kbd>x</kbd> | `chat.close` | Close this chat |
+| `config.next_section` | Next setting or section |
+| `config.previous_section` | Previous setting or section |
+| `config.swap_pane` | Swap between the section list and its contents |
+| `config.activate` | Change the selected setting, or run the job |
+| `config.add_account` | Add another chat account |
+| `config.refresh_checks` | Run the self-check again |
 | <kbd>c</kbd> <kbd>r</kbd> | `chat.reconnect` | Reconnect chat |
 | <kbd>c</kbd> <kbd>s</kbd> | `chat.search` | Search chat |
 | <kbd>c</kbd> <kbd>e</kbd> | `chat.emoji` | Emoji picker |
@@ -552,9 +558,12 @@ leader = "<Space>"
 
 [keys.obs]
 "<F1>" = "obs.mute_all"
+
+[keys.config]
+"n" = "config.next_section"
 ```
 
-The four tables are the four **contexts** a binding can belong to:
+The five tables are the five **contexts** a binding can belong to:
 
 | Table | Where it applies |
 |---|---|
@@ -562,6 +571,7 @@ The four tables are the four **contexts** a binding can belong to:
 | `[keys.stream_info]` | The Stream Info tab |
 | `[keys.chat]` | The chat panes, on either the Chat or the Combined tab |
 | `[keys.obs]` | The OBS tab |
+| `[keys.config]` | The Config tab |
 
 A key is looked up in the active tab's context first and in `global` second, so a
 tab can give a key a local meaning without you having to restate everything else.

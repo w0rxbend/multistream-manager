@@ -879,6 +879,7 @@ impl App {
         use crate::keys::Context;
         match self.tab {
             Tab::Obs => Context::Obs,
+            Tab::Config => Context::Config,
             Tab::Chat => Context::Chat,
             Tab::Combined if self.combined_focus == CombinedFocus::Chat => Context::Chat,
             _ => Context::StreamInfo,
@@ -1017,6 +1018,18 @@ impl App {
             Action::ChatSearchPrevious => self.chat.search_step(false),
             Action::ChatJoin => self.chat.mode = super::chat_tab::ChatFocus::Join(String::new()),
             Action::ChatClose => self.chat.close_active_chat(),
+
+            // The Config tab's own keys, as named actions rather than the
+            // hardcoded `KeyCode` matches they used to be. Being actions is
+            // what makes them rebindable, and what puts them in which-key,
+            // the full binding map and the command palette — the Config tab
+            // was the one tab whose keys appeared in none of those.
+            Action::ConfigNextSection => return self.config_move(1),
+            Action::ConfigPreviousSection => return self.config_move(-1),
+            Action::ConfigSwapPane => return self.config_swap_pane(),
+            Action::ConfigActivate => return self.config_activate(),
+            Action::ConfigAddAccount => return self.config_add_account_key(),
+            Action::ConfigRefreshChecks => return self.config_refresh_checks(),
             Action::ChatReconnect => self.chat.reconnect_active(),
             Action::ChatNextChat => self.chat.cycle_chat(true),
             Action::ChatPreviousChat => self.chat.cycle_chat(false),
@@ -1198,68 +1211,174 @@ impl App {
     /// This tab is a form, so most of its keys are local to it: they move a
     /// cursor, change a setting, or edit the layout. Anything the keymap has
     /// bound has already run by the time this is reached.
-    fn key_config(&mut self, key: KeyEvent) -> Vec<Command> {
-        use super::config_tab::{edit, Focus, Section};
+    /// Whether a Config binding means anything in this section.
+    ///
+    /// The tab's sections do different things, and a binding that does not
+    /// apply must fall through rather than swallow the key — the layout
+    /// editor's `r` rotates the arrangement and its `a` adds a panel, and
+    /// both share a letter with a binding that belongs to another section.
+    fn config_action_applies(
+        action: crate::keys::Action,
+        section: super::config_tab::Section,
+    ) -> bool {
+        use super::config_tab::Section;
+        use crate::keys::Action;
+
+        match action {
+            // Getting around always works.
+            Action::ConfigNextSection
+            | Action::ConfigPreviousSection
+            | Action::ConfigSwapPane => true,
+            // Enter means something in the sections that have something to
+            // change or run; elsewhere it is not a key at all.
+            Action::ConfigActivate => matches!(
+                section,
+                Section::Maintenance
+                    | Section::Accounts
+                    | Section::Appearance
+                    | Section::Notifications
+                    | Section::Chat
+            ),
+            Action::ConfigAddAccount => section == Section::Accounts,
+            Action::ConfigRefreshChecks => section == Section::Diagnostics,
+            _ => false,
+        }
+    }
+
+    /// Move the selection: through the section list, or through the section's
+    /// contents, depending on which pane has the keyboard.
+    fn config_move(&mut self, delta: isize) -> Vec<Command> {
+        use super::config_tab::{Focus, Section};
 
         let Some(mut config) = self.config_tab.clone() else {
             return vec![];
         };
         let rows = config.rows(self);
 
-        match key.code {
-            KeyCode::Tab | KeyCode::Char('h') | KeyCode::Char('l') => {
-                config.focus = match config.focus {
-                    Focus::Sections => Focus::Contents,
-                    Focus::Contents => Focus::Sections,
+        match config.focus {
+            Focus::Sections => {
+                let index = Section::ALL
+                    .iter()
+                    .position(|section| *section == config.section)
+                    .unwrap_or(0) as isize;
+                let count = Section::ALL.len() as isize;
+                config.section = Section::ALL[(index + delta).rem_euclid(count) as usize];
+                config.cursor = 0;
+                config.diagnostics_scroll = 0;
+                if config.section == Section::Diagnostics {
+                    config.refresh_diagnostics(&self.config);
+                }
+            }
+            // Diagnostics has no cursor — its checks are read rather than
+            // selected — so here the same keys scroll the list. On a short
+            // terminal the verdict at the bottom was otherwise off the screen
+            // with no way to reach it.
+            Focus::Contents if config.section == Section::Diagnostics => {
+                config.diagnostics_scroll = if delta > 0 {
+                    config.diagnostics_scroll.saturating_add(1)
+                } else {
+                    config.diagnostics_scroll.saturating_sub(1)
                 };
             }
-            KeyCode::Down | KeyCode::Char('j') => match config.focus {
-                Focus::Sections => {
-                    let index = Section::ALL
-                        .iter()
-                        .position(|section| *section == config.section)
-                        .unwrap_or(0);
-                    config.section = Section::ALL[(index + 1) % Section::ALL.len()];
-                    config.cursor = 0;
-                    if config.section == Section::Diagnostics {
-                        config.refresh_diagnostics(&self.config);
-                    }
+            Focus::Contents => {
+                if rows > 0 {
+                    let count = rows as isize;
+                    config.cursor =
+                        ((config.cursor as isize + delta).rem_euclid(count)) as usize;
                 }
-                // Diagnostics has no cursor — its checks are read rather
-                // than selected — so here the same keys scroll the list. On a
-                // short terminal the verdict at the bottom was otherwise off
-                // the screen with no way to reach it.
-                Focus::Contents if config.section == Section::Diagnostics => {
-                    config.diagnostics_scroll = config.diagnostics_scroll.saturating_add(1);
-                }
-                Focus::Contents => {
-                    if rows > 0 {
-                        config.cursor = (config.cursor + 1) % rows;
-                    }
-                }
-            },
-            KeyCode::Up | KeyCode::Char('k') => match config.focus {
-                Focus::Sections => {
-                    let index = Section::ALL
-                        .iter()
-                        .position(|section| *section == config.section)
-                        .unwrap_or(0);
-                    config.section =
-                        Section::ALL[(index + Section::ALL.len() - 1) % Section::ALL.len()];
-                    config.cursor = 0;
-                    if config.section == Section::Diagnostics {
-                        config.refresh_diagnostics(&self.config);
-                    }
-                }
-                Focus::Contents if config.section == Section::Diagnostics => {
-                    config.diagnostics_scroll = config.diagnostics_scroll.saturating_sub(1);
-                }
-                Focus::Contents => {
-                    if rows > 0 {
-                        config.cursor = (config.cursor + rows - 1) % rows;
-                    }
-                }
-            },
+            }
+        }
+
+        self.config_tab = Some(config);
+        vec![]
+    }
+
+    fn config_swap_pane(&mut self) -> Vec<Command> {
+        use super::config_tab::Focus;
+        if let Some(config) = self.config_tab.as_mut() {
+            config.focus = match config.focus {
+                Focus::Sections => Focus::Contents,
+                Focus::Contents => Focus::Sections,
+            };
+        }
+        vec![]
+    }
+
+    /// Enter: what that means depends on the section, because the sections do
+    /// genuinely different things.
+    fn config_activate(&mut self) -> Vec<Command> {
+        use super::config_tab::Section;
+        let Some(config) = self.config_tab.as_ref() else {
+            return vec![];
+        };
+        match config.section {
+            Section::Maintenance => self.run_maintenance(),
+            Section::Accounts => self.toggle_login(),
+            Section::Appearance => self.change_appearance_setting(),
+            Section::Notifications => self.change_notification_setting(),
+            Section::Chat => self.change_chat_setting(),
+            _ => vec![],
+        }
+    }
+
+    fn config_add_account_key(&mut self) -> Vec<Command> {
+        use super::config_tab::Section;
+        let is_accounts = self
+            .config_tab
+            .as_ref()
+            .is_some_and(|config| config.section == Section::Accounts);
+        if is_accounts {
+            self.add_chat_account()
+        } else {
+            vec![]
+        }
+    }
+
+    fn config_refresh_checks(&mut self) -> Vec<Command> {
+        use super::config_tab::Section;
+        let is_diagnostics = self
+            .config_tab
+            .as_ref()
+            .is_some_and(|config| config.section == Section::Diagnostics);
+        if !is_diagnostics {
+            return vec![];
+        }
+        let settings = self.config.clone();
+        if let Some(config) = self.config_tab.as_mut() {
+            config.refresh_diagnostics(&settings);
+            config.diagnostics_scroll = 0;
+        }
+        vec![]
+    }
+
+    fn key_config(&mut self, key: KeyEvent) -> Vec<Command> {
+        use super::config_tab::{edit, Section};
+
+        let Some(mut config) = self.config_tab.clone() else {
+            return vec![];
+        };
+
+        // Navigation and activation are named actions now, so they are
+        // rebindable and appear in which-key, the full binding map and the
+        // command palette — the Config tab was the one tab whose keys were in
+        // none of those.
+        //
+        // They are looked up *here* rather than by the general resolver
+        // because this tab deliberately owns its plain keys: the layout
+        // editor's `r` rotates and its `a` adds a panel, and letting the
+        // keymap consume those first would break the editor. So a binding
+        // applies only where it means something, and anything else falls
+        // through to the local keys below.
+        if let Some(action) = self.keymap.action(crate::keys::Context::Config, &[
+            crate::keys::Key::from_event(key),
+        ]) {
+            if Self::config_action_applies(action, config.section) {
+                self.config_tab = Some(config);
+                return self.run_action(action);
+            }
+        }
+
+        match key.code {
             KeyCode::Esc => {
                 // Leaving with an unsaved layout throws the edit away rather
                 // than keeping it half-applied, and says so.
@@ -1271,36 +1390,6 @@ impl App {
                 }
                 self.config_tab = None;
                 return self.go_to_tab(Tab::StreamInfo);
-            }
-            KeyCode::Enter if config.section == Section::Maintenance => {
-                self.config_tab = Some(config);
-                return self.run_maintenance();
-            }
-            KeyCode::Enter if config.section == Section::Accounts => {
-                self.config_tab = Some(config);
-                return self.toggle_login();
-            }
-            KeyCode::Char('a') if config.section == Section::Accounts => {
-                self.config_tab = Some(config);
-                return self.add_chat_account();
-            }
-            KeyCode::Enter if config.section == Section::Appearance => {
-                self.config_tab = Some(config);
-                return self.change_appearance_setting();
-            }
-            KeyCode::Char('r') if config.section == Section::Diagnostics => {
-                config.refresh_diagnostics(&self.config);
-                config.diagnostics_scroll = 0;
-                self.config_tab = Some(config);
-                return vec![];
-            }
-            KeyCode::Enter if config.section == Section::Notifications => {
-                self.config_tab = Some(config);
-                return self.change_notification_setting();
-            }
-            KeyCode::Enter if config.section == Section::Chat => {
-                self.config_tab = Some(config);
-                return self.change_chat_setting();
             }
             _ if config.section == Section::Layout => {
                 match key.code {
@@ -6174,6 +6263,52 @@ mod tests {
 
     /// Cleanup lists before it deletes. Removing things somebody made
     /// without showing them first would be asking for trust this has no way
+    /// The Config tab's keys are named actions now, so `[keys.config]` can
+    /// rebind them. They used to be hardcoded `KeyCode` matches — unbindable,
+    /// and invisible to which-key, the full binding map and the palette.
+    #[test]
+    fn the_config_tab_keys_can_be_rebound() {
+        let mut config = Config::default();
+        // Move down the section list with `n` instead of `j`.
+        config
+            .keys
+            .config
+            .insert("n".into(), "config.next_section".into());
+        let mut app = App::new(config);
+        app.splash_skipped = true;
+        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::ALT));
+
+        let first = app.config_tab.as_ref().expect("the tab has state").section;
+        app.handle_key(key(KeyCode::Char('n')));
+        let after = app.config_tab.as_ref().expect("the tab has state").section;
+
+        assert_ne!(first, after, "the rebound key has to move the selection");
+    }
+
+    /// A Config binding must not swallow a key that means something else in
+    /// the section that is open: `r` re-runs the self-check on Diagnostics
+    /// and rotates the arrangement in the layout editor.
+    #[test]
+    fn a_config_binding_falls_through_where_it_does_not_apply() {
+        let mut app = app();
+        go_to_config_section(&mut app, super::super::config_tab::Section::Layout);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+
+        let before = app
+            .config_tab
+            .as_ref()
+            .expect("the tab has state")
+            .draft
+            .clone();
+        app.handle_key(key(KeyCode::Char('r')));
+        let after = &app.config_tab.as_ref().expect("the tab has state").draft;
+
+        assert_ne!(
+            &before, after,
+            "`r` must still rotate the layout, not be eaten by config.refresh_checks"
+        );
+    }
+
     /// Chat logging had no control anywhere in the interface — it could only
     /// be turned on by editing config.toml — while Housekeeping's paid-event
     /// export reads the very logs it produces.

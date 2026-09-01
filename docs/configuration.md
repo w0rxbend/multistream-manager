@@ -694,9 +694,12 @@ leader = "<Space>"
 
 [keys.obs]
 "<F1>" = "obs.mute_all"
+
+[keys.config]
+"n" = "config.next_section"
 ```
 
-### The four contexts
+### The five contexts
 
 | Table | Where its bindings apply |
 |---|---|
@@ -704,11 +707,20 @@ leader = "<Space>"
 | `[keys.stream_info]` | The Stream Info tab |
 | `[keys.chat]` | The chat panes, on either the Chat or the Combined tab |
 | `[keys.obs]` | The OBS tab |
+| `[keys.config]` | The Config tab |
 
 A key press is looked up in the active tab's context first and in `global`
 second. That is what lets <kbd>j</kbd> scroll chat on one tab and move down the
 scene list on another without either having to know about the other, and it
 means a tab can give a key a local meaning without you restating everything else.
+
+`[keys.config]` has one wrinkle worth knowing: the Config tab's layout editor
+has keys of its own (`r` rotates, `a` adds a panel, `d` removes one, `J`/`K`
+reorder, `+`/`-` resize, `p` cycles the presets, `s` saves) which act on a panel
+list that only exists while that section is open. A `[keys.config]` binding
+applies only in the sections where it means something and otherwise falls
+through to those, so `r` re-runs the self-check on Diagnostics *and* still
+rotates the arrangement in the layout editor.
 
 ### How a binding is written
 

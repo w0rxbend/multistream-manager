@@ -243,6 +243,9 @@ pub struct KeysConfig {
 
     /// Bindings for the OBS tab.
     pub obs: std::collections::BTreeMap<String, String>,
+
+    /// Bindings for the Config tab.
+    pub config: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for KeysConfig {
@@ -253,6 +256,7 @@ impl Default for KeysConfig {
             stream_info: std::collections::BTreeMap::new(),
             chat: std::collections::BTreeMap::new(),
             obs: std::collections::BTreeMap::new(),
+            config: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -288,6 +292,7 @@ impl KeysConfig {
                 Context::StreamInfo => &self.stream_info,
                 Context::Chat => &self.chat,
                 Context::Obs => &self.obs,
+                Context::Config => &self.config,
             };
             for (written, action_name) in table {
                 let chord = match parse_chord(written, leader) {

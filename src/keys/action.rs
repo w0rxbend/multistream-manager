@@ -28,14 +28,17 @@ pub enum Context {
     Chat,
     /// The OBS tab.
     Obs,
+    /// The Config tab.
+    Config,
 }
 
 impl Context {
-    pub const ALL: [Context; 4] = [
+    pub const ALL: [Context; 5] = [
         Context::Global,
         Context::StreamInfo,
         Context::Chat,
         Context::Obs,
+        Context::Config,
     ];
 
     /// The name used in the config file: `[keys]`, `[keys.chat]`, and so on.
@@ -45,6 +48,7 @@ impl Context {
             Context::StreamInfo => "stream_info",
             Context::Chat => "chat",
             Context::Obs => "obs",
+            Context::Config => "config",
         }
     }
 }
@@ -88,6 +92,12 @@ pub enum Action {
     ChatSearchPrevious,
     ChatJoin,
     ChatClose,
+    ConfigNextSection,
+    ConfigPreviousSection,
+    ConfigSwapPane,
+    ConfigActivate,
+    ConfigAddAccount,
+    ConfigRefreshChecks,
     ChatReconnect,
     ChatNextChat,
     ChatPreviousChat,
@@ -162,6 +172,12 @@ impl Action {
         Action::ChatSearchPrevious,
         Action::ChatJoin,
         Action::ChatClose,
+        Action::ConfigNextSection,
+        Action::ConfigPreviousSection,
+        Action::ConfigSwapPane,
+        Action::ConfigActivate,
+        Action::ConfigAddAccount,
+        Action::ConfigRefreshChecks,
         Action::ChatReconnect,
         Action::ChatNextChat,
         Action::ChatPreviousChat,
@@ -236,6 +252,12 @@ impl Action {
             Action::ChatSearchPrevious => "chat.search_previous",
             Action::ChatJoin => "chat.join",
             Action::ChatClose => "chat.close",
+            Action::ConfigNextSection => "config.next_section",
+            Action::ConfigPreviousSection => "config.previous_section",
+            Action::ConfigSwapPane => "config.swap_pane",
+            Action::ConfigActivate => "config.activate",
+            Action::ConfigAddAccount => "config.add_account",
+            Action::ConfigRefreshChecks => "config.refresh_checks",
             Action::ChatReconnect => "chat.reconnect",
             Action::ChatNextChat => "chat.next",
             Action::ChatPreviousChat => "chat.previous",
@@ -320,6 +342,12 @@ impl Action {
             Action::ChatSearchPrevious => "Previous match",
             Action::ChatJoin => "Join a channel",
             Action::ChatClose => "Close this chat",
+            Action::ConfigNextSection => "Next setting or section",
+            Action::ConfigPreviousSection => "Previous setting or section",
+            Action::ConfigSwapPane => "Swap between the section list and its contents",
+            Action::ConfigActivate => "Change the selected setting, or run the job",
+            Action::ConfigAddAccount => "Add another chat account",
+            Action::ConfigRefreshChecks => "Run the self-check again",
             Action::ChatReconnect => "Reconnect chat",
             Action::ChatNextChat => "Next chat",
             Action::ChatPreviousChat => "Previous chat",
