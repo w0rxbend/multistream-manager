@@ -588,6 +588,14 @@ pub struct RenderOpts {
     /// uses it to suppress the repeated author header so a run of messages
     /// reads as one block under a single name (twi ContinuesGroup).
     pub continues_group: bool,
+    /// This message names you.
+    ///
+    /// The program already worked this out — the `1` filter is exactly this
+    /// test — and used it only to decide which *other* messages to hide. With
+    /// no filter on, the one message in the pane that is addressed to you
+    /// looked like all the rest, which is the wrong way round: a mention is
+    /// the thing you must not scroll past.
+    pub mentions_me: bool,
 }
 
 impl Default for RenderOpts {
@@ -599,6 +607,7 @@ impl Default for RenderOpts {
             highlight_emotes: true,
             full_username: false,
             continues_group: false,
+            mentions_me: false,
         }
     }
 }
@@ -731,6 +740,7 @@ pub fn render_message(msg: &ChatMessage, width: u16, opts: &RenderOpts) -> Vec<L
 
     let content = content_pieces(msg, opts);
     let mut rows = wrap(prefix, content, width);
+    mark_mention(&mut rows, opts);
     // Above the message, so it reads the way a threaded reply does. Dropped
     // in the compact layout, which trades every decoration for message text.
     if !compact {
@@ -739,6 +749,28 @@ pub fn render_message(msg: &ChatMessage, width: u16, opts: &RenderOpts) -> Vec<L
         }
     }
     rows
+}
+
+/// Put an accent gutter down the left of a message that names you.
+///
+/// A bar rather than a background wash, so it does not compete with the
+/// selection highlight — the two mean different things and have to be
+/// distinguishable when they land on the same row.
+fn mark_mention(rows: &mut [Line<'static>], opts: &RenderOpts) {
+    if !opts.mentions_me {
+        return;
+    }
+    for row in rows.iter_mut() {
+        row.spans.insert(
+            0,
+            Span::styled(
+                "▏".to_string(),
+                Style::new()
+                    .fg(accent_color())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        );
+    }
 }
 
 /// Cut `text` to at most `width` terminal cells, ending in `…` when it had to
@@ -935,6 +967,7 @@ fn render_grouped(msg: &ChatMessage, width: usize, opts: &RenderOpts) -> Vec<Lin
         }
     }
     rows.extend(wrapper.finish());
+    mark_mention(&mut rows, opts);
     rows
 }
 

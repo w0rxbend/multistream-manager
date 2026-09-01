@@ -594,6 +594,9 @@ impl ChatTabState {
                 offset = next;
             }
             chat.state.scroll = offset.clamp(0, (len - 1) as i64) as usize;
+            if chat.state.scroll == 0 {
+                chat.state.below = 0;
+            }
         }
     }
 
@@ -629,6 +632,7 @@ impl ChatTabState {
                 }
             }
             chat.state.scroll = 0;
+            chat.state.below = 0;
         }
     }
 
@@ -1802,6 +1806,9 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
             .is_some_and(|prev| {
                 !prev.author.id.is_empty() && prev.author.id == msg.author.id && !prev.deleted
             });
+        // A message that names you gets a gutter bar. `self_login` is
+        // already resolved here for the filter, so this costs nothing extra.
+        opts.mentions_me = crate::chat::state::mentions(msg, &self_login);
         let mut rendered = render_message(msg, area.width, &opts);
         if Some(index) == selected_index {
             // The selection is a background wash over the whole message so
@@ -1817,6 +1824,32 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
     lines.reverse();
 
     frame.render_widget(Paragraph::new(lines), area);
+
+    // A view held still while messages pile up underneath looks exactly like
+    // a quiet chat, which is the wrong impression to give somebody who
+    // scrolled up mid-stream. Say so, and say how to get back.
+    if chat.state.below > 0 && area.height > 0 {
+        let notice = format!(" ▼ {} new below — G jumps to live ", chat.state.below);
+        let width = notice.chars().count() as u16;
+        if width < area.width {
+            let strip = Rect {
+                x: area.x + area.width - width,
+                y: area.y + area.height - 1,
+                width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    notice,
+                    Style::default()
+                        .fg(sk.canvas)
+                        .bg(sk.warning)
+                        .add_modifier(Modifier::BOLD),
+                ))),
+                strip,
+            );
+        }
+    }
 }
 
 fn draw_composer(

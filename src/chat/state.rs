@@ -70,21 +70,8 @@ impl Filters {
         if !self.any() {
             return true;
         }
-        if self.mentions && !self_login.is_empty() {
-            let needle = format!("@{}", self_login.to_lowercase());
-            let hay = msg.text.to_lowercase();
-            let mut from = 0;
-            while let Some(at) = hay[from..].find(&needle) {
-                let end = from + at + needle.len();
-                let word_continues = hay[end..]
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
-                if !word_continues {
-                    return true;
-                }
-                from = end;
-            }
+        if self.mentions && mentions(msg, self_login) {
+            return true;
         }
         if self.roles {
             let privileged = msg.author.badges.iter().any(|b| {
@@ -136,6 +123,14 @@ pub struct ChatState {
     /// words back required backspacing over everything after it, in the one
     /// text box the user spends a whole stream in.
     pub draft: crate::ui::input::TextInput,
+    /// How many new messages have arrived while the view was held still.
+    ///
+    /// `scroll > 0` means the reader is in history and the view is frozen
+    /// while messages append underneath. Nothing said so, and nothing said
+    /// how much had gone past — the pane looked identical to a quiet chat,
+    /// which is the wrong impression to give somebody who has scrolled up
+    /// mid-stream. Reset whenever the view returns to the live edge.
+    pub below: usize,
     /// What has been sent in this chat, newest last, for Up/Down recall.
     ///
     /// Bounded, because it is one more thing that would otherwise grow for
@@ -172,6 +167,33 @@ pub struct ChatState {
 /// second copy of the scrollback.
 const SENT_HISTORY: usize = 50;
 
+/// Whether `msg` addresses `self_login` by name.
+///
+/// Word-anchored, so `@someone_else` cannot match `@some`. Lifted out of the
+/// mentions filter because the same question has a second answer: the filter
+/// used this to decide what to *hide*, while a message addressed to you
+/// looked exactly like every other message when nothing was filtered.
+pub fn mentions(msg: &ChatMessage, self_login: &str) -> bool {
+    if self_login.is_empty() {
+        return false;
+    }
+    let needle = format!("@{}", self_login.to_lowercase());
+    let hay = msg.text.to_lowercase();
+    let mut from = 0;
+    while let Some(at) = hay[from..].find(&needle) {
+        let end = from + at + needle.len();
+        let word_continues = hay[end..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if !word_continues {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
 impl ChatState {
     pub fn new(config: &ChatConfig) -> Self {
         Self {
@@ -180,6 +202,7 @@ impl ChatState {
             scroll: 0,
             connection: (ConnectionStatus::Connecting, String::new()),
             draft: crate::ui::input::TextInput::default(),
+            below: 0,
             sent: std::collections::VecDeque::new(),
             recall: None,
             stashed_draft: String::new(),
@@ -304,6 +327,7 @@ impl ChatState {
             ChatEvent::ChatCleared => {
                 self.messages.clear();
                 self.scroll = 0;
+                self.below = 0;
                 self.unread = 0;
                 // A cleared chat has nothing selected; a stale cursor would
                 // re-attach to whatever arrives next — and moderation acts on
@@ -345,6 +369,9 @@ impl ChatState {
             // history moved down to meet the view, so the offset is capped at
             // the last reachable row.
             self.scroll += 1;
+            if is_news {
+                self.below += 1;
+            }
             if evicted {
                 self.scroll = self.scroll.min(self.messages.len().saturating_sub(1));
             }
@@ -626,6 +653,33 @@ mod tests {
         state.mark_hidden();
         deliver(&mut state, msg("n3", "bob", "while away"));
         assert_eq!(state.unread, 1);
+    }
+
+    /// A held view with messages piling up underneath looked exactly like a
+    /// quiet chat. The state knew — it was already growing `scroll` to hold
+    /// the view still — and did not count.
+    #[test]
+    fn messages_arriving_behind_a_held_view_are_counted() {
+        let mut state = ChatState::new(&config(100));
+        for i in 0..5 {
+            deliver(&mut state, msg(&format!("m{i}"), "someone", "hello"));
+        }
+        state.scroll = 2;
+        assert_eq!(state.below, 0);
+
+        deliver(&mut state, msg("new1", "someone", "arriving"));
+        deliver(&mut state, msg("new2", "someone", "arriving"));
+        assert_eq!(state.below, 2);
+
+        // History loaded behind the view is not news and must not be counted.
+        let mut old = msg("old", "someone", "from before");
+        old.historical = true;
+        deliver(&mut state, old);
+        assert_eq!(state.below, 2);
+
+        // Returning to the live edge clears it.
+        state.apply(ChatEvent::ChatCleared);
+        assert_eq!(state.below, 0);
     }
 
     #[test]

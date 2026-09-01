@@ -306,7 +306,7 @@ Combined tab.
 |---|---|---|
 | <kbd>j</kbd> / <kbd>k</kbd>, <kbd>↓</kbd> / <kbd>↑</kbd> | `chat.scroll_down` / `chat.scroll_up` | Move the selection |
 | <kbd>PgDn</kbd> / <kbd>PgUp</kbd> | `chat.page_down` / `chat.page_up` | Page forward / back |
-| <kbd>g</kbd> / <kbd>G</kbd> | `chat.oldest` / `chat.newest` | Jump to the oldest / newest message |
+| <kbd>g</kbd> / <kbd>G</kbd> | `chat.oldest` / `chat.newest` | Jump to the oldest / newest message. While you are reading history the pane counts what has arrived below and says so; <kbd>G</kbd> takes you back to live |
 | <kbd>h</kbd> / <kbd>l</kbd>, <kbd>Tab</kbd> | `chat.previous_pane` / `chat.next_pane` | Focus the other pane |
 | <kbd>[</kbd> / <kbd>]</kbd> | `chat.previous` / `chat.next` | Previous / next open chat in this account |
 | <kbd>{</kbd> / <kbd>}</kbd> | `chat.previous_account` / `chat.next_account` | Previous / next account sub-tab |
@@ -335,6 +335,26 @@ side, Twitch's Helix moderation endpoints on the other, because Twitch removed
 moderation commands from IRC in 2023 — but nothing about that shows in the
 keys. Moderating a Twitch channel you do not own works if you are a moderator
 there; Twitch checks that itself and says so if you are not.
+
+### What the pane marks for you
+
+Some things are picked out rather than left to be spotted:
+
+- **A message that names you** carries an accent bar down its left edge. This
+  is the same word-anchored test the <kbd>1</kbd> filter uses, so it agrees
+  with what filtering by mentions would show — the difference is that the bar
+  is there when no filter is on, which is when a mention is easiest to miss.
+- **A reply** shows what it is replying to on a muted line above it
+  (`↳ Asker: where do I find the config file?`), truncated to the pane. Twitch
+  sends that context with the message and it is not repeated in the message
+  text, so without the line a reply reads as an unprompted remark.
+- **Cheers and subscription events** get a solid chip — ` ◈ 1000 bits `,
+  ` ★ resub ` — the same treatment YouTube Super Chats and memberships have,
+  and for the same reason: they should be impossible to scroll past. The chip
+  colour steps up with the size of the cheer.
+- **New messages below a held view.** Scrolling up freezes the pane while chat
+  continues underneath; a marker in the bottom-right corner counts what has
+  arrived.
 
 ### Editing what you are typing
 
