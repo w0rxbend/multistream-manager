@@ -45,6 +45,31 @@ pub const FILE_ROWS: [FileRow; 3] = [
     ("Log", crate::paths::log_file),
 ];
 
+/// What a form field starts out holding.
+///
+/// One place, so the constructor and the profile switcher cannot disagree
+/// about where a field's initial value comes from.
+fn initial_text(field: Field, preset: &crate::config::PresetConfig, plan: &StreamPlan) -> String {
+    match field {
+        Field::Title => plan.title.clone(),
+        Field::Description => plan.description.clone(),
+        Field::Tags => plan.tags_input(),
+        // The typed name, not the resolved id: the id is held separately and
+        // re-resolved when the text changes.
+        Field::TwitchCategory => preset.twitch_category.clone(),
+        Field::YouTubeCategory => youtube::category_name(&plan.youtube_category_id),
+        Field::Language => plan.language.clone(),
+        Field::Thumbnail => preset.thumbnail.clone(),
+        // Deliberately empty. A scheduled start is a decision about *this*
+        // broadcast, and `PresetConfig::from_plan` does not persist one — a
+        // saved start time would silently schedule every future stream for a
+        // moment that has already passed.
+        Field::StartTime => String::new(),
+        // Not text fields; `is_text_input` filters these out before this runs.
+        Field::Privacy | Field::MadeForKids | Field::AutoStart | Field::AutoStop => String::new(),
+    }
+}
+
 /// Whether a connect failure means the saved login is no longer usable.
 ///
 /// Deliberately narrow. A timeout or a 500 is the network having a bad
@@ -489,19 +514,22 @@ impl App {
         let preset = config.active_preset().clone();
         let plan = preset.to_plan();
 
-        let mut inputs = BTreeMap::new();
-        inputs.insert(Field::Title, TextInput::new(plan.title.clone()));
-        inputs.insert(Field::Description, TextInput::new(plan.description.clone()));
-        inputs.insert(Field::Tags, TextInput::new(plan.tags_input()));
-        inputs.insert(
-            Field::TwitchCategory,
-            TextInput::new(preset.twitch_category.clone()),
-        );
-        inputs.insert(
-            Field::YouTubeCategory,
-            TextInput::new(youtube::category_name(&plan.youtube_category_id)),
-        );
-        inputs.insert(Field::Language, TextInput::new(plan.language.clone()));
+        // Every field `Field::is_text_input` claims is editable gets one, built
+        // by walking that list rather than by hand. The six hand-written
+        // inserts this replaces covered six of the eight, so `Thumbnail` and
+        // `StartTime` had no `TextInput` at all: both were drawn, both were
+        // reachable with Tab, and neither could be typed into — while
+        // `plan()` read them through `.unwrap_or_default()` and so always saw
+        // an empty string. Ctrl+S then wrote that empty string over a
+        // hand-configured `thumbnail =` in config.toml.
+        //
+        // The same loop is used for `setup_inputs` a few lines below, which is
+        // where the shape comes from.
+        let inputs: BTreeMap<Field, TextInput> = Field::ORDER
+            .iter()
+            .filter(|field| field.is_text_input())
+            .map(|&field| (field, TextInput::new(initial_text(field, &preset, &plan))))
+            .collect();
 
         let selected = if preset.platforms.is_empty() {
             Platform::ALL.to_vec()
@@ -4779,6 +4807,12 @@ impl App {
             crate::youtube::category_name(&plan.youtube_category_id),
         );
         self.set_field(Field::Language, plan.language.clone());
+        // Through the same table the constructor uses, so switching profile
+        // and starting up cannot disagree about a field's initial value.
+        self.set_field(
+            Field::Thumbnail,
+            initial_text(Field::Thumbnail, &preset, &plan),
+        );
 
         self.twitch_category = plan.twitch_category.clone();
         self.youtube_category_id = plan.youtube_category_id.clone();
@@ -7220,6 +7254,50 @@ mod tests {
             result: Ok(()),
         });
         assert!(!app.logged_in[&Platform::Twitch]);
+    }
+
+    /// Every field `is_text_input` claims is editable must actually have one.
+    ///
+    /// Six of the eight were inserted by hand, so `Thumbnail` and `StartTime`
+    /// were drawn, reachable with Tab, and impossible to type into — while
+    /// `plan()` read them through `unwrap_or_default()` and always saw an
+    /// empty string, so Ctrl+S wrote that empty string over a hand-configured
+    /// `thumbnail =` in config.toml.
+    #[test]
+    fn every_editable_field_has_a_text_input() {
+        let app = app();
+        for field in Field::ORDER.iter().filter(|f| f.is_text_input()) {
+            assert!(
+                app.inputs.contains_key(field),
+                "{field:?} says it is editable and has no TextInput"
+            );
+        }
+        assert_eq!(
+            app.inputs.len(),
+            Field::ORDER.iter().filter(|f| f.is_text_input()).count(),
+            "and nothing that is not editable has one"
+        );
+    }
+
+    /// The thumbnail is the one that lost data: it is persisted in
+    /// `[preset]`, so an inert field meant every save erased it.
+    #[test]
+    fn the_thumbnail_survives_a_round_trip_through_the_form() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("thumbnail-round-trip");
+        let mut config = Config::default();
+        config.preset.thumbnail = "/pictures/tonight.png".into();
+
+        let app = App::new(config);
+        assert_eq!(
+            app.inputs.get(&Field::Thumbnail).map(|i| i.value()),
+            Some("/pictures/tonight.png"),
+            "the configured thumbnail has to reach the form"
+        );
+        assert_eq!(
+            app.plan().thumbnail_path,
+            "/pictures/tonight.png",
+            "…and the plan built from that form"
+        );
     }
 
     /// There was no paste anywhere: a 5000-character YouTube description had
