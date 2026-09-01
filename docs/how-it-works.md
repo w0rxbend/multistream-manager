@@ -166,6 +166,16 @@ PATCH https://api.twitch.tv/helix/channels?broadcaster_id=…
 A success returns `204 No Content`. There is nothing to create and nothing to
 clean up afterwards.
 
+The `tags` field is the one subtlety. Twitch reads an *absent* `tags` as "leave
+them alone" and an *empty array* as "remove them all", which are two different
+instructions that an empty list on its own cannot tell apart. Sending `[]`
+whenever no tags were set would silently wipe tags set elsewhere; never sending
+it means once tags are on a channel this program can never take them off.
+`StreamPlan::clear_tags` carries which one was meant: the form sets it when you
+empty the field by hand, and a preset loaded from the file never does, because a
+file that says nothing about tags is not asking for them to be removed. The form
+shows which of the two is about to happen.
+
 Two other calls surround it, and neither is part of applying the plan:
 
 * `connect` calls `https://id.twitch.tv/oauth2/validate`, which is unusual in

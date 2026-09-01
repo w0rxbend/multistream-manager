@@ -962,6 +962,21 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App) {
             ));
         }
 
+        // An empty tags field means two opposite things to Twitch, so say
+        // which one is about to happen rather than leaving it to be found out
+        // after the fact.
+        if *field == Field::Tags
+            && app.is_selected(Platform::Twitch)
+            && field_value(app, *field).trim().is_empty()
+        {
+            let (note, colour) = if app.tags_edited {
+                ("   none — the channel's tags will be cleared", sk.warning)
+            } else {
+                ("   none — the channel's tags are left alone", sk.muted)
+            };
+            spans.push(Span::styled(note, Style::new().fg(colour)));
+        }
+
         lines.push(Line::from(spans));
     }
 

@@ -236,6 +236,12 @@ pub struct App {
 
     /// Index into [`Field::ORDER`] for the focused form field.
     pub field_cursor: usize,
+    /// Whether the tags field has been edited since the form was opened.
+    ///
+    /// This is what tells "I emptied the tags" apart from "I never touched
+    /// them", which are the same empty string but two opposite instructions
+    /// to Twitch. See [`crate::model::StreamPlan::clear_tags`].
+    pub tags_edited: bool,
     pub inputs: BTreeMap<Field, TextInput>,
 
     /// The Twitch category chosen from the autocomplete, already resolved to an
@@ -474,6 +480,7 @@ impl App {
             selected,
             platform_cursor: 0,
             field_cursor: 0,
+            tags_edited: false,
             inputs,
             twitch_category: plan.twitch_category.clone(),
             youtube_category_id: plan.youtube_category_id.clone(),
@@ -615,6 +622,13 @@ impl App {
                     .map(|i| i.value())
                     .unwrap_or(""),
             ),
+            // Emptying the field by hand is the one case where "no tags"
+            // means "take the tags off" rather than "I did not set any".
+            clear_tags: self.tags_edited
+                && self
+                    .inputs
+                    .get(&Field::Tags)
+                    .is_some_and(|input| input.value().trim().is_empty()),
             twitch_category: self.twitch_category.clone(),
             youtube_category_id: self.youtube_category_id.clone(),
             language: self
@@ -3384,6 +3398,13 @@ impl App {
     /// Called after any edit to a text field: refreshes autocomplete and clears
     /// a category selection that the user has typed over.
     fn on_text_changed(&mut self, field: Field) -> Vec<Command> {
+        // Every route into this function is somebody typing, so this is the
+        // one place that knows the tags field was touched by hand — which is
+        // what tells "I emptied the tags" apart from "I never set any".
+        if field == Field::Tags {
+            self.tags_edited = true;
+        }
+
         match field {
             Field::TwitchCategory => {
                 // Typing invalidates a previously chosen category — otherwise

@@ -953,6 +953,9 @@ impl PresetConfig {
             title: self.title.clone(),
             description: self.description.clone(),
             tags: self.tags.clone(),
+            // A preset says what to set, never what to remove: a file with no
+            // tags in it must not wipe the tags on the channel.
+            clear_tags: false,
             // Only treat the category as resolved when we have *both* halves of
             // the pair; a name with no id still needs a lookup.
             twitch_category: if self.twitch_category_id.is_empty()

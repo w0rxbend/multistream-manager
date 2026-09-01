@@ -145,6 +145,21 @@ pub struct StreamPlan {
     /// appended to the YouTube title as `#hashtags` while they still fit.
     pub tags: Vec<String>,
 
+    /// Whether an empty `tags` means "remove the channel's tags" rather than
+    /// "leave whatever is there alone".
+    ///
+    /// Twitch's channel update treats an absent `tags` field as "do not
+    /// touch" and an empty array as "remove them all", and those are two
+    /// genuinely different intentions that an empty `Vec` cannot tell apart.
+    /// Sending an empty array whenever the user had simply not set any tags
+    /// would wipe the tags already on their channel; never sending one meant
+    /// that once tags were on a channel, this program could not take them off
+    /// — emptying the field looked exactly like not touching it.
+    ///
+    /// The interface sets this when the tags field is emptied by hand, which
+    /// is the case where the user has said what they want.
+    pub clear_tags: bool,
+
     /// The Twitch category, already resolved to an id by searching their API.
     pub twitch_category: Option<Category>,
 
@@ -200,6 +215,7 @@ impl Default for StreamPlan {
             title: String::new(),
             description: String::new(),
             tags: Vec::new(),
+            clear_tags: false,
             twitch_category: None,
             // 20 = "Gaming", the most common choice for a live stream.
             youtube_category_id: "20".to_string(),

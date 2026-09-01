@@ -188,11 +188,19 @@ impl TwitchBackend {
             title: plan.twitch_title(),
             game_id: category.id.clone(),
             broadcaster_language: plan.language.clone(),
-            // Twitch documents an empty array as "remove all tags". Sending one
-            // when the user simply did not set any tags would silently wipe the
-            // tags already on their channel, so the field is omitted instead —
-            // every field on this endpoint is optional.
-            tags: if tags.is_empty() { None } else { Some(tags) },
+            // Twitch documents an absent `tags` as "leave them alone" and an
+            // empty array as "remove them all". Those are two different
+            // intentions, and an empty list on its own cannot tell them
+            // apart: sending `[]` whenever no tags were set would silently
+            // wipe the tags already on the channel, while never sending it
+            // meant the tags could never be taken off from here at all.
+            //
+            // `clear_tags` is the plan saying which one was meant.
+            tags: match (tags.is_empty(), plan.clear_tags) {
+                (true, false) => None,
+                (true, true) => Some(Vec::new()),
+                (false, _) => Some(tags),
+            },
         };
 
         let base = &self.base;
@@ -609,6 +617,43 @@ mod tests {
         assert!(
             json.get("tags").is_none(),
             "an empty tag list must be omitted, not sent as []: {json}"
+        );
+    }
+
+    /// The plan has to be able to express both meanings of "no tags", or the
+    /// user can set tags from here and never take them off again.
+    #[test]
+    fn an_emptied_tag_list_sends_the_empty_array_that_clears_them() {
+        let leave_alone = StreamPlan {
+            tags: Vec::new(),
+            clear_tags: false,
+            ..StreamPlan::default()
+        };
+        let clear = StreamPlan {
+            tags: Vec::new(),
+            clear_tags: true,
+            ..StreamPlan::default()
+        };
+
+        // This mirrors the `match` in `update_channel`; the request struct is
+        // built there from exactly these two inputs.
+        let field_for = |plan: &StreamPlan| {
+            let tags = plan.twitch_tags();
+            match (tags.is_empty(), plan.clear_tags) {
+                (true, false) => None,
+                (true, true) => Some(Vec::new()),
+                (false, _) => Some(tags),
+            }
+        };
+
+        assert!(
+            field_for(&leave_alone).is_none(),
+            "not setting tags must leave the channel's alone"
+        );
+        assert_eq!(
+            field_for(&clear),
+            Some(Vec::new()),
+            "emptying the field must send the empty array Twitch reads as \"remove all\""
         );
     }
 
