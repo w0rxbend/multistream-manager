@@ -46,6 +46,9 @@ pub enum Action {
     FocusChat(Platform),
     /// Give the keyboard to the stream-info half of the Combined tab.
     FocusStreamInfo,
+    /// Scroll one chat pane, named because the pointer was over it rather
+    /// than because it has the keyboard.
+    ScrollPane { platform: Platform, back: bool },
     /// Scroll back through history (away from the newest).
     ScrollBack,
     /// Scroll forward toward the newest.
@@ -202,8 +205,28 @@ pub fn action_for(
     split_percent: u16,
 ) -> Option<Action> {
     match event.kind {
-        MouseEventKind::ScrollUp => Some(Action::ScrollBack),
-        MouseEventKind::ScrollDown => Some(Action::ScrollForward),
+        // Scrolling acts on the pane under the pointer, not the focused one.
+        // Rolling the wheel over the YouTube pane scrolled Twitch — and since
+        // scrolling clears the selection, it silently dropped a reply armed
+        // in the other pane.
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            let back = matches!(event.kind, MouseEventKind::ScrollUp);
+            if let Target::ChatPane(platform) = target_at(
+                area,
+                event.column,
+                event.row,
+                chat_showing,
+                combined,
+                split_percent,
+            ) {
+                return Some(Action::ScrollPane { platform, back });
+            }
+            Some(if back {
+                Action::ScrollBack
+            } else {
+                Action::ScrollForward
+            })
+        }
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
             match target_at(
                 area,
@@ -387,14 +410,38 @@ mod tests {
         assert_eq!(action_for(click(10, 10), area(), false, false, 50), None);
     }
 
+    /// Over a chat pane, the wheel scrolls *that* pane rather than whichever
+    /// has the keyboard. It used to scroll the focused one, so rolling over
+    /// the YouTube pane scrolled Twitch — and since scrolling clears the
+    /// selection, it silently dropped a reply armed in the other pane.
     #[test]
-    fn the_wheel_scrolls_in_both_directions() {
+    fn the_wheel_scrolls_the_pane_under_the_pointer() {
         assert_eq!(
             action_for(wheel(true), area(), true, false, 50),
-            Some(Action::ScrollBack)
+            Some(Action::ScrollPane {
+                platform: Platform::Twitch,
+                back: true
+            })
         );
         assert_eq!(
             action_for(wheel(false), area(), true, false, 50),
+            Some(Action::ScrollPane {
+                platform: Platform::Twitch,
+                back: false
+            })
+        );
+    }
+
+    /// Away from the chat panes it is the ordinary scroll, which is what the
+    /// log and the message history use.
+    #[test]
+    fn the_wheel_scrolls_in_both_directions_elsewhere() {
+        assert_eq!(
+            action_for(wheel(true), area(), false, false, 50),
+            Some(Action::ScrollBack)
+        );
+        assert_eq!(
+            action_for(wheel(false), area(), false, false, 50),
             Some(Action::ScrollForward)
         );
     }

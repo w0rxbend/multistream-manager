@@ -3733,6 +3733,15 @@ impl App {
                 self.combined_focus = CombinedFocus::StreamInfo;
                 vec![]
             }
+            Action::ScrollPane { platform, back } => {
+                // The pane the pointer is over, without moving the keyboard
+                // focus: a wheel is for reading, and taking the focus would
+                // move where the next keystroke lands.
+                const WHEEL_LINES: i64 = 3;
+                self.chat
+                    .scroll_pane(platform, if back { WHEEL_LINES } else { -WHEEL_LINES });
+                vec![]
+            }
             Action::ScrollBack => self.scroll(true),
             Action::ScrollForward => self.scroll(false),
         }
@@ -3880,6 +3889,11 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => picker.move_by(1),
             KeyCode::PageUp => picker.move_by(-10),
             KeyCode::PageDown => picker.move_by(10),
+            // 58 entries and no way to type a name: letters were dropped on
+            // the floor, which reads as the keyboard not working. Typing now
+            // filters and moves the preview to the first match.
+            KeyCode::Backspace => picker.backspace(),
+            KeyCode::Char(c) if is_typed_text(&key) && c != 'j' && c != 'k' => picker.push(c),
             KeyCode::Home => picker.move_to(0),
             KeyCode::End => {
                 let last = picker.last_index();

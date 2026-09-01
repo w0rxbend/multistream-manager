@@ -580,6 +580,18 @@ impl ChatTabState {
     /// moderation act on a message the user cannot see. With filters active
     /// the walk skips hidden rows, so paging can never strand the view in a
     /// span with nothing to draw.
+    /// Scroll one named pane, without moving the keyboard focus.
+    ///
+    /// The wheel used to scroll whichever pane had the keyboard, so rolling
+    /// over the YouTube pane scrolled Twitch — and scrolling clears the
+    /// selection, so it silently dropped a reply armed in the other pane.
+    pub fn scroll_pane(&mut self, platform: Platform, delta: i64) {
+        let was = self.focus;
+        self.focus = platform;
+        self.scroll_by(delta);
+        self.focus = was;
+    }
+
     pub fn scroll_by(&mut self, delta: i64) {
         self.pending_mod = None;
         let login = self

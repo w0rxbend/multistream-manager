@@ -43,6 +43,13 @@ pub enum Event {
     RecordStateChanged {
         active: bool,
         paused: bool,
+        /// Where OBS wrote the file, when it says.
+        ///
+        /// Only present on the stop event. It was parsed away with the rest
+        /// of the payload, so the pane could never answer "which file was
+        /// that take?" — which is the question asked immediately after a
+        /// recording stops.
+        output_path: Option<String>,
     },
     ProfileChanged {
         profile: String,
@@ -98,18 +105,24 @@ impl Event {
                 "OBS_WEBSOCKET_OUTPUT_STARTED" => Some(Event::RecordStateChanged {
                     active: true,
                     paused: false,
+                    output_path: None,
                 }),
                 "OBS_WEBSOCKET_OUTPUT_PAUSED" => Some(Event::RecordStateChanged {
                     active: true,
                     paused: true,
+                    output_path: None,
                 }),
                 "OBS_WEBSOCKET_OUTPUT_RESUMED" => Some(Event::RecordStateChanged {
                     active: true,
                     paused: false,
+                    output_path: None,
                 }),
+                // The stop carries the file it wrote, which is the one moment
+                // anybody wants to know it.
                 "OBS_WEBSOCKET_OUTPUT_STOPPED" => Some(Event::RecordStateChanged {
                     active: false,
                     paused: false,
+                    output_path: string("outputPath").filter(|path| !path.is_empty()),
                 }),
                 _ => None,
             },
@@ -181,11 +194,18 @@ impl Event {
                     state.stream_bitrate_kbps = None;
                 }
             }
-            Event::RecordStateChanged { active, paused } => {
+            Event::RecordStateChanged {
+                active,
+                paused,
+                output_path,
+            } => {
                 state.recording = *active;
                 state.record_paused = *paused;
                 if !*active {
                     state.record_duration = None;
+                }
+                if let Some(path) = output_path {
+                    state.last_recording = Some(path.clone());
                 }
             }
             Event::ProfileChanged { profile } => {
@@ -219,14 +239,18 @@ impl Event {
                 }
                 .to_string(),
             ),
-            Event::RecordStateChanged { active, paused } => Some(
-                match (active, paused) {
-                    (true, true) => "OBS paused recording",
-                    (true, false) => "OBS started recording",
-                    (false, _) => "OBS stopped recording",
-                }
-                .to_string(),
-            ),
+            Event::RecordStateChanged {
+                active,
+                paused,
+                output_path,
+            } => Some(match (active, paused, output_path) {
+                (true, true, _) => "OBS paused recording".to_string(),
+                (true, false, _) => "OBS started recording".to_string(),
+                // Naming the file is the whole point of carrying the path:
+                // "which take was that" is asked the moment recording stops.
+                (false, _, Some(path)) => format!("OBS stopped recording — saved to {path}"),
+                (false, _, None) => "OBS stopped recording".to_string(),
+            }),
             Event::ProfileChanged { profile } => Some(format!("OBS profile: {profile}")),
             Event::SceneCollectionChanged { collection } => {
                 Some(format!("OBS scene collection: {collection}"))
@@ -292,7 +316,8 @@ mod tests {
             ),
             Some(Event::RecordStateChanged {
                 active: true,
-                paused: true
+                paused: true,
+                output_path: None
             })
         );
         assert_eq!(
@@ -302,9 +327,38 @@ mod tests {
             ),
             Some(Event::RecordStateChanged {
                 active: true,
-                paused: false
+                paused: false,
+                output_path: None
             })
         );
+    }
+
+    /// The stop event carries the file OBS wrote, and it used to be parsed
+    /// away with the rest of the payload — so the pane could never answer
+    /// "which file was that take?", which is asked the moment recording
+    /// stops.
+    #[test]
+    fn a_finished_recording_names_the_file_it_wrote() {
+        let event = parse(
+            "RecordStateChanged",
+            json!({
+                "outputState": "OBS_WEBSOCKET_OUTPUT_STOPPED",
+                "outputPath": "/home/someone/Videos/2026-09-01 20-14-03.mkv"
+            }),
+        )
+        .expect("a stop is parsed");
+
+        assert_eq!(
+            event,
+            Event::RecordStateChanged {
+                active: false,
+                paused: false,
+                output_path: Some("/home/someone/Videos/2026-09-01 20-14-03.mkv".into()),
+            }
+        );
+        assert!(event
+            .describe()
+            .is_some_and(|text| text.contains("2026-09-01 20-14-03.mkv")));
     }
 
     /// Most of what OBS sends is of no interest here, and that has to be the

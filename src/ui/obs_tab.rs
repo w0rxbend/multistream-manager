@@ -100,6 +100,22 @@ pub fn draw_status_lines(frame: &mut Frame, area: Rect, obs: &ObsState) {
             },
             Style::new().fg(sk.muted),
         ),
+        // The file the last recording wrote. "Which take was that" is asked
+        // the moment recording stops, and the path arrives on that very
+        // event — it was parsed away with the rest of the payload.
+        Span::styled(
+            match (&obs.last_recording, obs.recording) {
+                (Some(path), false) => {
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    format!("   saved {name}")
+                }
+                _ => String::new(),
+            },
+            Style::new().fg(sk.muted),
+        ),
     ];
 
     let third = vec![
@@ -336,11 +352,16 @@ fn audio_line(
         Style::new().fg(sk.foreground),
     ));
 
-    let level = match input.volume_percent() {
-        Some(percent) => format!(" {percent}%"),
+    // Both figures when there is room. `volume_db` is fetched, stored and
+    // documented as "kept as sent rather than derived" — and then read by
+    // nothing, so this pane said `80%` while OBS's own mixer beside it said
+    // `-2.0 dB`, and the two never appeared to be about the same thing.
+    let level = match (input.volume_percent(), input.volume_db) {
+        (Some(percent), Some(db)) if width >= 34 => format!(" {percent}% ({db:.1} dB)"),
+        (Some(percent), _) => format!(" {percent}%"),
         // Not "0%": an unknown volume and a silent one are different things,
         // and only one of them is a problem.
-        None => " —".to_string(),
+        (None, _) => " —".to_string(),
     };
     spans.push(Span::styled(level, Style::new().fg(sk.muted)));
 

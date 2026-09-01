@@ -176,6 +176,13 @@ pub struct ObsState {
     pub stream_bitrate_kbps: Option<f64>,
 
     pub stats: Option<Stats>,
+
+    /// Where OBS wrote the last recording it finished.
+    ///
+    /// The path arrives on the stop event and was parsed away with the rest
+    /// of the payload, so the pane could never answer "which file was that
+    /// take?" — the question asked immediately after a recording stops.
+    pub last_recording: Option<String>,
 }
 
 impl ObsState {

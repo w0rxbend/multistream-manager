@@ -33,6 +33,12 @@ pub struct ThemePicker {
     /// Set when saving the choice failed, so the reason can be shown instead
     /// of the picker silently doing nothing.
     pub save_error: Option<String>,
+    /// A typed filter over the names.
+    ///
+    /// There are 58 entries and the picker handled only j/k and paging, so
+    /// finding one by name meant walking to it — and letters were dropped on
+    /// the floor, which reads as the keyboard not working.
+    pub query: String,
 }
 
 /// Every selectable entry: the built-in presets in their table order, then a
@@ -57,10 +63,40 @@ impl ThemePicker {
             selected,
             original_palette: current_palette.clone(),
             save_error: None,
+            query: String::new(),
         }
     }
 
     /// The name of the entry under the cursor.
+    /// The entries matching the query, as indices into [`entries`].
+    pub fn matches(&self) -> Vec<usize> {
+        let needle = self.query.trim().to_lowercase();
+        entries()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, name)| needle.is_empty() || name.to_lowercase().contains(&needle))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Type a character into the filter, and move the cursor to the first
+    /// match so the preview follows what was typed.
+    pub fn push(&mut self, c: char) {
+        self.query.push(c);
+        self.snap_to_match();
+    }
+
+    pub fn backspace(&mut self) {
+        self.query.pop();
+        self.snap_to_match();
+    }
+
+    fn snap_to_match(&mut self) {
+        if let Some(first) = self.matches().first().copied() {
+            self.selected = first;
+        }
+    }
+
     pub fn selected_name(&self) -> String {
         entries()
             .get(self.selected)
@@ -136,15 +172,25 @@ pub fn draw(frame: &mut Frame, area: Rect, picker: &ThemePicker, custom: &Palett
 
     draw_list(frame, rows[1], picker, custom);
 
+    // The query, when there is one, because a filtered list that does not say
+    // it is filtered looks like a list that lost entries.
+    let hint_text = if picker.query.is_empty() {
+        "↑/↓ or j/k preview   type to filter   enter keep and save   esc cancel".to_string()
+    } else {
+        format!(
+            "filter: {}   {} of {} shown   ↑/↓ preview   enter keep   esc cancel",
+            picker.query,
+            picker.matches().len(),
+            entries().len()
+        )
+    };
+
     let hints = match &picker.save_error {
         Some(error) => Line::from(Span::styled(
             format!("could not save: {error}"),
             Style::new().fg(sk.error).add_modifier(Modifier::BOLD),
         )),
-        None => Line::from(Span::styled(
-            "↑/↓ or j/k preview   enter keep and save   esc cancel",
-            Style::new().fg(sk.muted),
-        )),
+        None => Line::from(Span::styled(hint_text, Style::new().fg(sk.muted))),
     };
     frame.render_widget(Paragraph::new(hints), rows[2]);
 }
