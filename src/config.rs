@@ -394,6 +394,17 @@ impl KeysConfig {
             ));
         }
 
+        // A binding that buries a whole group under it. This one is worse
+        // than a shadow: the keys do not do something else, they stop
+        // existing, and `shadowed` above cannot see it because it only
+        // compares identical chords.
+        for (chord, action, buried) in keymap.swallowed() {
+            problems.push(format!(
+                "{chord} runs {action} and so makes {buried} longer binding(s) starting with \
+                 it unreachable"
+            ));
+        }
+
         (keymap, problems)
     }
 }
@@ -1940,6 +1951,53 @@ mod tests {
         let message = format!("{error}");
         assert!(message.contains("MSM_TWITCH_CLIENT_ID"), "got {message}");
         assert!(message.contains("setup screen"), "got {message}");
+    }
+
+    /// `[keys.global] "q" = ""` looks like it turns off quitting, and does
+    /// nothing at all: `q` is bound per tab rather than globally, so the
+    /// removal hits nothing and the key carries on working.
+    #[test]
+    fn unbinding_a_chord_that_is_not_there_says_where_it_is() {
+        let mut keys = KeysConfig::default();
+        keys.global.insert("q".into(), String::new());
+        let (_, problems) = keys.keymap();
+
+        let complaint = problems
+            .iter()
+            .find(|problem| problem.contains("did nothing"))
+            .unwrap_or_else(|| panic!("expected a complaint, got {problems:?}"));
+        assert!(complaint.contains("[keys.chat]"), "{complaint}");
+    }
+
+    /// A typo in an action name is one letter from a real one often enough
+    /// that offering the real one is worth doing — `Action::ALL` is right
+    /// there.
+    #[test]
+    fn a_mistyped_action_name_suggests_the_real_one() {
+        let mut keys = KeysConfig::default();
+        keys.global.insert("<F9>".into(), "obs.strem".into());
+        let (_, problems) = keys.keymap();
+
+        let complaint = problems
+            .iter()
+            .find(|problem| problem.contains("no action called"))
+            .unwrap_or_else(|| panic!("expected a complaint, got {problems:?}"));
+        assert!(complaint.contains("obs.stream"), "{complaint}");
+    }
+
+    /// Binding a prefix makes every longer binding under it unreachable —
+    /// `resolve_key` checks for an exact match before it checks for a prefix.
+    /// The whole OBS group vanishing is worth a word.
+    #[test]
+    fn a_binding_that_buries_a_whole_group_is_reported() {
+        let mut keys = KeysConfig::default();
+        keys.global.insert("<Leader>o".into(), "app.quit".into());
+        let (_, problems) = keys.keymap();
+
+        assert!(
+            problems.iter().any(|problem| problem.contains("unreachable")),
+            "expected a complaint, got {problems:?}"
+        );
     }
 
     /// The documented footgun with credentials is a shell-profile variable a

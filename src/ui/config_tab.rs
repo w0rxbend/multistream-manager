@@ -833,11 +833,39 @@ fn draw_keys(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
         .collect();
 
     lines.push(Line::from(""));
+
+    // Anything wrong with `[keys]`, here rather than only in a log line at
+    // start-up. Somebody whose binding was silently discarded comes to this
+    // screen and finds a table that does not contain it; without this there
+    // is nothing to say why.
+    if !app.key_problems.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} problem(s) with [keys] — these bindings were not applied:",
+                app.key_problems.len()
+            ),
+            Style::new().fg(sk.warning).add_modifier(Modifier::BOLD),
+        )));
+        for problem in app.key_problems.iter().take(4) {
+            lines.push(Line::from(Span::styled(
+                format!("  {problem}"),
+                Style::new().fg(sk.warning),
+            )));
+        }
+        if app.key_problems.len() > 4 {
+            lines.push(Line::from(Span::styled(
+                format!("  …and {} more, in the activity log.", app.key_problems.len() - 4),
+                Style::new().fg(sk.muted),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+
     lines.push(Line::from(Span::styled(
         "Change these under [keys] in config.toml. <Leader>? shows them as a map.",
         Style::new().fg(sk.muted),
     )));
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 fn draw_obs(frame: &mut Frame, area: Rect, app: &App) {

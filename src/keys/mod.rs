@@ -256,6 +256,35 @@ impl Keymap {
     }
 }
 
+impl Keymap {
+    /// Bindings made unreachable by a shorter one that is a prefix of them.
+    ///
+    /// `resolve_key` checks for an exact match *before* it checks whether the
+    /// chord is a prefix, so binding `<Leader>o` to something makes every
+    /// `<Leader>o…` binding — the whole OBS group — unreachable. Nothing said
+    /// so: `shadowed` only compares identical chords, and the keys simply
+    /// stopped working.
+    pub fn swallowed(&self) -> Vec<(String, Action, usize)> {
+        let mut found = Vec::new();
+        for ((context, chord), action) in &self.bindings {
+            let buried = self
+                .bindings
+                .keys()
+                .filter(|(other_context, other)| {
+                    other_context == context
+                        && other.len() > chord.len()
+                        && other.starts_with(chord)
+                })
+                .count();
+            if buried > 0 {
+                found.push((write_chord(chord, self.leader), *action, buried));
+            }
+        }
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found
+    }
+}
+
 /// One choice in the which-key popup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Continuation {

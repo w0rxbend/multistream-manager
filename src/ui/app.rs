@@ -410,6 +410,13 @@ pub struct App {
     /// on any ordinary terminal most were off the bottom with no way to reach
     /// them.
     pub which_key_scroll: u16,
+    /// Everything wrong with `[keys]`, kept rather than logged once.
+    ///
+    /// These were pushed into the activity log at start-up and the vector
+    /// dropped — so the user whose binding was silently discarded went to
+    /// Config → Keys and found a table that simply did not contain it, with
+    /// no hint that anything had gone wrong.
+    pub key_problems: Vec<String>,
 
     /// The command palette, while it is open.
     pub command_palette: Option<super::command_palette::CommandPalette>,
@@ -538,6 +545,7 @@ impl App {
             pending_keys: Vec::new(),
             which_key_all: false,
             which_key_scroll: 0,
+            key_problems: Vec::new(),
             obs_focus: ObsFocus::Scenes,
             obs_scene_cursor: 0,
             obs_audio_cursor: 0,
@@ -599,9 +607,10 @@ impl App {
         // where a problem with the config belongs. It is reported rather than
         // fatal: a typo in a key name should cost that one binding, not the
         // ability to start.
-        for problem in key_problems {
+        for problem in &key_problems {
             app.push_log(LogLevel::Warning, format!("Key binding: {problem}"));
         }
+        app.key_problems = key_problems;
         if let Some(problem) = layout_problem {
             app.push_log(
                 LogLevel::Warning,
@@ -942,6 +951,14 @@ impl App {
 
         if self.keymap.is_prefix(context, &chord) {
             self.pending_keys = chord;
+            return Some(vec![]);
+        }
+
+        // Backspace steps back one key of a part-typed chord rather than
+        // abandoning the whole thing. Every vim-shaped user tries it within a
+        // minute of mistyping a leader sequence.
+        if !self.pending_keys.is_empty() && key.code == KeyCode::Backspace {
+            self.pending_keys.pop();
             return Some(vec![]);
         }
 
@@ -1395,7 +1412,7 @@ impl App {
     }
 
     fn key_config(&mut self, key: KeyEvent) -> Vec<Command> {
-        use super::config_tab::{edit, Section};
+        use super::config_tab::{edit, Focus, Section};
 
         let Some(mut config) = self.config_tab.clone() else {
             return vec![];
@@ -1425,6 +1442,15 @@ impl App {
             KeyCode::Esc if self.logout_armed.is_some() => {
                 self.logout_armed = None;
                 self.notify(super::toast::Level::Info, "Logout cancelled.");
+                self.config_tab = Some(config);
+                return vec![];
+            }
+            // Esc from the contents pane steps back to the section list
+            // first. Somebody pressing it to mean "stop editing this" was
+            // thrown to another tab and told their layout had been discarded,
+            // which is a lot to happen from one key.
+            KeyCode::Esc if config.focus == Focus::Contents => {
+                config.focus = Focus::Sections;
                 self.config_tab = Some(config);
                 return vec![];
             }
