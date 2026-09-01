@@ -9,7 +9,13 @@ for the Config tab, then move to the **Diagnostics** section. It checks the
 config file, both platforms' credentials, the saved logins, the clipboard, the
 terminal's colour support, the log location and the OBS connection in one go.
 Each line reads `ok`, `warn` or `fail`, and every warning says what to do about
-it rather than only what is wrong.
+it rather than only what is wrong. The credential lines name where each half
+came from — `id from config.toml, secret from $MSM_TWITCH_CLIENT_SECRET` —
+which is the thing to look at when a variable set in a shell profile is
+invisible to a desktop launcher. The snapshot is retaken by itself after a
+login completes or the OBS connection changes, so it never answers with
+information from before the thing you just did; <kbd>r</kbd> takes it again,
+and <kbd>j</kbd>/<kbd>k</kbd> scroll the list on a short terminal.
 
 **Then Config → Accounts**, which separates "the credentials are missing" from
 "the login has expired" without touching the network, and **Config → Files**,

@@ -120,18 +120,38 @@ pub fn run(config: &Config) -> Vec<Check> {
     // Credentials, per platform. Missing ones only warn: plenty of people
     // stream to one platform and have no reason to fill in the other.
     for platform in Platform::ALL {
+        // Where each half came from, not merely whether it is there. The
+        // documented footgun is a shell-profile variable a desktop launcher
+        // cannot see, and "the client id is present" is no help with that —
+        // it is present in the terminal and absent in the launcher.
+        let (id, secret) = config.credential_sources(platform);
         match config.check_credentials(&[platform]) {
             Ok(()) => checks.push(Check::ok(format!(
-                "{} credentials configured",
-                platform.label()
+                "{} credentials configured — id {}, secret {}",
+                platform.label(),
+                id.describe(),
+                secret.describe()
             ))),
-            Err(_) => checks.push(Check::warning(
-                format!("{} has no client id and secret", platform.label()),
-                format!(
-                    "Fill them in on the setup screen. Skip this if you do not stream to {}.",
-                    platform.label()
-                ),
-            )),
+            Err(_) => {
+                // Naming which half is missing, rather than sending somebody
+                // back through all five setup steps for one empty field.
+                let missing = match (
+                    id == crate::config::CredentialSource::Missing,
+                    secret == crate::config::CredentialSource::Missing,
+                ) {
+                    (true, true) => "no client id and no client secret".to_string(),
+                    (true, false) => format!("no client id (the secret is {})", secret.describe()),
+                    (false, true) => format!("no client secret (the id is {})", id.describe()),
+                    (false, false) => "credentials that are present but unusable".to_string(),
+                };
+                checks.push(Check::warning(
+                    format!("{} has {missing}", platform.label()),
+                    format!(
+                        "Fill them in on the setup screen. Skip this if you do not stream to {}.",
+                        platform.label()
+                    ),
+                ));
+            }
         }
     }
 

@@ -161,6 +161,14 @@ pub struct ConfigTab {
     /// the machine, so it is taken when the section is opened and on demand
     /// afterwards.
     pub diagnostics: Diagnostics,
+    /// How far the diagnostics list is scrolled.
+    ///
+    /// The pane is a plain paragraph with no cursor, so the checks are read
+    /// rather than selected — but there are around a dozen of them, each with
+    /// its own advice line, and on a short terminal the verdict at the bottom
+    /// was simply cut off. Scrolling is the difference between a self-check
+    /// and a self-check you can finish reading.
+    pub diagnostics_scroll: u16,
     /// Which layout preset `p` will apply next.
     ///
     /// Its own counter, because the obvious thing — deriving it from
@@ -190,6 +198,7 @@ impl ConfigTab {
             dirty: false,
             diagnostics: Diagnostics::default(),
             preset_index: 0,
+            diagnostics_scroll: 0,
         }
     }
 
@@ -969,7 +978,17 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
         Style::new().fg(sk.muted),
     )));
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    // Clamped here rather than where the key is handled, because this is the
+    // only place that knows how many lines there turned out to be.
+    let overflow = (lines.len() as u16).saturating_sub(area.height);
+    let offset = config.diagnostics_scroll.min(overflow);
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((offset, 0)),
+        area,
+    );
 }
 
 fn draw_paths(frame: &mut Frame, area: Rect) {

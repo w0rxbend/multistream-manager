@@ -1225,6 +1225,13 @@ impl App {
                         config.refresh_diagnostics(&self.config);
                     }
                 }
+                // Diagnostics has no cursor — its checks are read rather
+                // than selected — so here the same keys scroll the list. On a
+                // short terminal the verdict at the bottom was otherwise off
+                // the screen with no way to reach it.
+                Focus::Contents if config.section == Section::Diagnostics => {
+                    config.diagnostics_scroll = config.diagnostics_scroll.saturating_add(1);
+                }
                 Focus::Contents => {
                     if rows > 0 {
                         config.cursor = (config.cursor + 1) % rows;
@@ -1243,6 +1250,9 @@ impl App {
                     if config.section == Section::Diagnostics {
                         config.refresh_diagnostics(&self.config);
                     }
+                }
+                Focus::Contents if config.section == Section::Diagnostics => {
+                    config.diagnostics_scroll = config.diagnostics_scroll.saturating_sub(1);
                 }
                 Focus::Contents => {
                     if rows > 0 {
@@ -1280,6 +1290,7 @@ impl App {
             }
             KeyCode::Char('r') if config.section == Section::Diagnostics => {
                 config.refresh_diagnostics(&self.config);
+                config.diagnostics_scroll = 0;
                 self.config_tab = Some(config);
                 return vec![];
             }
@@ -1932,6 +1943,8 @@ impl App {
                 }
                 let previously_connected = self.obs.connection == Connection::Connected;
                 self.obs.connection = connection.clone();
+                // So is the OBS connection.
+                self.refresh_diagnostics_if_showing();
 
                 match &connection {
                     Connection::Connected => {
@@ -2100,6 +2113,29 @@ impl App {
             // Everything else is fire-and-forget from the interface's point of
             // view: losing it costs the user a keypress, not a stuck screen.
             _ => {}
+        }
+    }
+
+    /// Take the diagnostics again, if that pane is what is on screen.
+    ///
+    /// The snapshot was taken when the section was opened and on `r`, and
+    /// never again — so a stale "no platform is authorised" sat there after a
+    /// login had just succeeded, and an OBS connection that came up while the
+    /// pane was open was still reported as down. A self-check that answers
+    /// with information from before the thing you just did is worse than one
+    /// that makes you press a key, because it looks current.
+    fn refresh_diagnostics_if_showing(&mut self) {
+        let showing = self.tab == Tab::Config
+            && self
+                .config_tab
+                .as_ref()
+                .is_some_and(|config| config.section == super::config_tab::Section::Diagnostics);
+        if !showing {
+            return;
+        }
+        let config = self.config.clone();
+        if let Some(tab) = self.config_tab.as_mut() {
+            tab.refresh_diagnostics(&config);
         }
     }
 
@@ -2297,6 +2333,8 @@ impl App {
                         );
                     }
                 }
+                // The logins are one of the things the self-check reports.
+                self.refresh_diagnostics_if_showing();
 
                 // Once something is authorised, go straight to the main view
                 // rather than making the user re-pick platforms: connecting is

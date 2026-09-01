@@ -607,6 +607,52 @@ impl TwitchConfig {
 /// beat inheriting one. A variable that exists but is empty counts as unset:
 /// that is what an unfilled shell variable looks like, and treating it as a
 /// real empty credential would fail later in a way nobody could read.
+/// Where a credential's value came from.
+///
+/// The documented footgun with these is a shell-profile variable that a
+/// desktop launcher does not see, and that is precisely a question of
+/// *source*: "the client id is present" is not the answer somebody debugging
+/// it needs, because it is present in their terminal and absent in the
+/// launcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredentialSource {
+    /// Written in config.toml.
+    File,
+    /// Read from the named environment variable.
+    Environment(String),
+    /// Neither place has it.
+    Missing,
+}
+
+impl CredentialSource {
+    /// A phrase to put after a credential's name.
+    pub fn describe(&self) -> String {
+        match self {
+            CredentialSource::File => "from config.toml".to_string(),
+            CredentialSource::Environment(name) => format!("from ${name}"),
+            CredentialSource::Missing => "not set".to_string(),
+        }
+    }
+}
+
+/// Where [`resolve_credential`] would find this credential, without
+/// producing the value itself.
+fn credential_source(literal: &str, variable: &str) -> CredentialSource {
+    if !literal.trim().is_empty() {
+        return CredentialSource::File;
+    }
+    let variable = variable.trim();
+    if variable.is_empty() {
+        return CredentialSource::Missing;
+    }
+    match std::env::var(variable) {
+        Ok(value) if !value.trim().is_empty() => {
+            CredentialSource::Environment(variable.to_string())
+        }
+        _ => CredentialSource::Missing,
+    }
+}
+
 fn resolve_credential(literal: &str, variable: &str) -> String {
     let literal = literal.trim();
     if !literal.is_empty() {
@@ -1102,6 +1148,21 @@ impl Config {
     /// secret from the config file into its environment variable — which
     /// leaves the credential itself identical — is correctly seen as no
     /// change at all.
+    /// Where each platform's client id and secret came from, for
+    /// diagnostics.
+    pub fn credential_sources(&self, platform: Platform) -> (CredentialSource, CredentialSource) {
+        match platform {
+            Platform::Twitch => (
+                credential_source(&self.twitch.client_id, &self.twitch.client_id_env),
+                credential_source(&self.twitch.client_secret, &self.twitch.client_secret_env),
+            ),
+            Platform::YouTube => (
+                credential_source(&self.youtube.client_id, &self.youtube.client_id_env),
+                credential_source(&self.youtube.client_secret, &self.youtube.client_secret_env),
+            ),
+        }
+    }
+
     pub fn credentials_fingerprint(&self) -> Vec<String> {
         vec![
             self.twitch.client_id(),
@@ -1664,6 +1725,44 @@ mod tests {
         let message = format!("{error}");
         assert!(message.contains("MSM_TWITCH_CLIENT_ID"), "got {message}");
         assert!(message.contains("setup screen"), "got {message}");
+    }
+
+    /// The documented footgun with credentials is a shell-profile variable a
+    /// desktop launcher cannot see. "The client id is present" is no help
+    /// with that — it *is* present, in the terminal — so the source is what
+    /// the self-check has to report.
+    #[test]
+    fn the_credential_source_says_where_the_value_came_from() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("credential-source");
+        let mut config = Config::default();
+
+        assert_eq!(
+            config.credential_sources(Platform::Twitch).0,
+            CredentialSource::Missing
+        );
+
+        config.twitch.client_id = "written-here".into();
+        assert_eq!(
+            config.credential_sources(Platform::Twitch).0,
+            CredentialSource::File
+        );
+
+        config.twitch.client_id = String::new();
+        std::env::set_var("MSM_TEST_TWITCH_ID", "from-the-environment");
+        config.twitch.client_id_env = "MSM_TEST_TWITCH_ID".into();
+        assert_eq!(
+            config.credential_sources(Platform::Twitch).0,
+            CredentialSource::Environment("MSM_TEST_TWITCH_ID".into())
+        );
+
+        // An environment variable that exists but is empty counts as unset,
+        // matching how the value itself resolves.
+        std::env::set_var("MSM_TEST_TWITCH_ID", "   ");
+        assert_eq!(
+            config.credential_sources(Platform::Twitch).0,
+            CredentialSource::Missing
+        );
+        std::env::remove_var("MSM_TEST_TWITCH_ID");
     }
 
     /// The engine is expensive to rebuild and holds live tokens, so a save
