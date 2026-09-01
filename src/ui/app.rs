@@ -1075,7 +1075,7 @@ impl App {
                 self.config.appearance.animations = self.animation.name().to_string();
                 let mode = self.animation.name();
                 self.notify(super::toast::Level::Info, format!("Animations: {mode}"));
-                return self.save_appearance();
+                return self.save_settings();
             }
             Action::ToggleTelemetry => {
                 self.config.appearance.telemetry = !self.config.appearance.telemetry;
@@ -1085,7 +1085,7 @@ impl App {
                     "off"
                 };
                 self.notify(super::toast::Level::Info, format!("Telemetry: {state}"));
-                return self.save_appearance();
+                return self.save_settings();
             }
 
             Action::TabStreamInfo => return self.go_to_tab(Tab::StreamInfo),
@@ -1832,7 +1832,7 @@ impl App {
         // `stream_id` is one of the settings the engine is built from, so the
         // worker has to be told or the next go-live would still use the old
         // one. `save_appearance` writes the file and sends `ReloadConfig`.
-        self.save_appearance()
+        self.save_settings()
     }
 
     /// Forget the extra chat account under the cursor.
@@ -1970,7 +1970,7 @@ impl App {
                 "Mouse reporting changes when msm next starts.",
             );
         }
-        self.save_appearance()
+        self.save_settings()
     }
 
     /// Flip the chat-logging switch.
@@ -1991,7 +1991,7 @@ impl App {
         // as well as the file: turning it on opens a log now rather than at
         // the next start-up.
         self.chat.set_chat_logging(self.config.chat.chat_logging);
-        self.save_appearance()
+        self.save_settings()
     }
 
     /// Flip whichever desktop-notification switch is selected.
@@ -2062,7 +2062,7 @@ impl App {
             .configure(self.config.notifications.notifier_settings());
         let config = self.config.clone();
         self.chat.adopt_notification_settings(&config);
-        self.save_appearance()
+        self.save_settings()
     }
 
     /// Log in to, or out of, the selected platform.
@@ -2142,22 +2142,20 @@ impl App {
             return vec![];
         };
 
-        config.dirty = false;
-        self.layout = draft;
-        self.config.layout = file;
-        match self.config.save() {
-            Ok(()) => {
-                self.notify(super::toast::Level::Success, "Layout saved.");
-                vec![Command::ReloadConfig(Box::new(self.config.clone()))]
-            }
-            Err(err) => {
-                self.notify(
-                    super::toast::Level::Error,
-                    format!("Could not save the layout: {err:#}"),
-                );
-                vec![]
-            }
+        // Applied only once the write succeeds. These three assignments used
+        // to happen first, so a failed save left the interface showing an
+        // arrangement that is not in the file — and with `dirty` cleared, no
+        // longer offering to save it.
+        let commands = self.persist("the layout", move |config| config.layout = file);
+        if commands.is_empty() {
+            return commands;
         }
+        self.layout = draft;
+        if let Some(config) = self.config_tab.as_mut() {
+            config.dirty = false;
+        }
+        self.notify(super::toast::Level::Success, "Layout saved.");
+        commands
     }
 
     /// Say so when a config-defined OBS shortcut can never fire.
@@ -3242,7 +3240,7 @@ impl App {
                     self.config.appearance.animations = self.animation.name().to_string();
                     let mode = self.animation.name();
                     self.notify(super::toast::Level::Info, format!("Animations: {mode}"));
-                    return self.save_appearance();
+                    return self.save_settings();
                 }
                 // Show or hide the process telemetry in the header.
                 KeyCode::Char('t') => {
@@ -3254,7 +3252,7 @@ impl App {
                         "off"
                     };
                     self.notify(super::toast::Level::Info, format!("Telemetry: {state}"));
-                    return self.save_appearance();
+                    return self.save_settings();
                 }
                 // Open the message history — vim's `:messages`, on a key.
                 KeyCode::Char('m') => {
@@ -3729,22 +3727,17 @@ impl App {
             }
         }
 
-        match self.config.save() {
-            Ok(()) => {
-                self.push_log(LogLevel::Success, "API credentials saved to config.toml.");
-                self.go_to(Screen::Login);
-                // The worker holds its own copy of the config and would
-                // otherwise keep building backends from the old credentials.
-                vec![Command::ReloadConfig(Box::new(self.config.clone()))]
-            }
-            Err(err) => {
-                self.push_log(
-                    LogLevel::Error,
-                    format!("Could not save the credentials: {err:#}"),
-                );
-                vec![]
-            }
+        // The fields are already on `self.config`, so this commits what is
+        // there. `persist` carries the `ReloadConfig` the worker needs: it
+        // holds its own copy and would otherwise keep building backends from
+        // the old credentials.
+        let commands = self.save_settings();
+        if commands.is_empty() {
+            return commands;
         }
+        self.push_log(LogLevel::Success, "API credentials saved to config.toml.");
+        self.go_to(Screen::Login);
+        commands
     }
 
     // -- Screen 0b: logging in ----------------------------------------------
@@ -4047,17 +4040,57 @@ impl App {
     /// A setting toggled from a key has to survive a restart, or it is not a
     /// setting — it is a thing you have to redo every session. A failed write
     /// is reported and the change stays in effect for this run.
-    fn save_appearance(&mut self) -> Vec<Command> {
-        match self.config.save() {
-            Ok(()) => vec![Command::ReloadConfig(Box::new(self.config.clone()))],
+    /// Write a change to config.toml, and tell the worker.
+    ///
+    /// The one place that knows how a configuration change is committed.
+    /// Before this there were five — the layout editor, the credential
+    /// screen, the settings rows, the theme picker and Ctrl+S — each
+    /// restating the same three-part rule in prose: save, adopt the saved
+    /// copy, and send `ReloadConfig` so the worker's own copy does not go
+    /// stale. They did not agree. `save_preset` did the first two and forgot
+    /// the third, so pressing Ctrl+S wrote the file and left the worker
+    /// building backends from settings the file no longer held.
+    ///
+    /// The rollback discipline was inconsistent too. `save_theme` restored
+    /// the previous theme when the write failed; `save_layout` had already
+    /// assigned `self.layout` and cleared `dirty` *before* attempting the
+    /// write, so a failed save left the interface showing an arrangement that
+    /// is not in the file and no longer offering to save it.
+    ///
+    /// Here the edit is applied to a *clone*, and the clone is adopted only
+    /// once the write has succeeded — so a failed save cannot leave the
+    /// interface and the file disagreeing.
+    fn persist(&mut self, what: &'static str, edit: impl FnOnce(&mut Config)) -> Vec<Command> {
+        let mut next = self.config.clone();
+        edit(&mut next);
+
+        match next.save() {
+            Ok(()) => {
+                self.config = next;
+                vec![Command::ReloadConfig(Box::new(self.config.clone()))]
+            }
             Err(err) => {
                 self.notify(
                     super::toast::Level::Error,
-                    format!("Could not save that setting: {err:#}"),
+                    format!("Could not save {what}: {err:#}"),
                 );
                 vec![]
             }
         }
+    }
+
+    /// Commit a setting the caller has already applied to `self.config`.
+    ///
+    /// Named for what it does rather than for one of its callers: six of the
+    /// nine reach it from chat logging, the notification switches, the
+    /// profile switch and pinning a stream id, none of which is appearance.
+    ///
+    /// This one takes the edit as already-applied because its callers flip a
+    /// field and then commit; `persist` is the shape to prefer for anything
+    /// new, since it cannot leave a half-applied change behind on failure.
+    fn save_settings(&mut self) -> Vec<Command> {
+        let edited = self.config.clone();
+        self.persist("that setting", move |config| *config = edited)
     }
 
     /// Keep the previewed theme: write the name into the config file and close
@@ -4067,27 +4100,30 @@ impl App {
     /// failure would look exactly like success and then quietly forget the
     /// choice at the next start-up.
     fn save_theme(&mut self) -> Vec<Command> {
-        let Some(picker) = self.theme_picker.as_mut() else {
+        let Some(picker) = self.theme_picker.as_ref() else {
             return vec![];
         };
         let chosen = picker.selected_name();
-        let previous = self.config.appearance.theme.clone();
-        self.config.appearance.theme = chosen.clone();
-        match self.config.save() {
-            Ok(()) => {
-                self.theme_picker = None;
-                self.push_log(LogLevel::Info, format!("Theme saved: {chosen}"));
-                // The worker holds its own copy of the config, so it has to be
-                // told as well or the next thing it writes would put the old
-                // theme name back.
-                vec![Command::ReloadConfig(Box::new(self.config.clone()))]
+
+        // No manual rollback: `persist` applies the edit to a clone and
+        // adopts it only once the write succeeds, so a failed save leaves
+        // `self.config` untouched rather than needing the previous theme name
+        // to be restored by hand.
+        let theme = chosen.clone();
+        let commands = self.persist("the theme", move |config| config.appearance.theme = theme);
+
+        if commands.is_empty() {
+            // The picker stays open so the reason is visible against the
+            // choice that caused it.
+            if let Some(picker) = self.theme_picker.as_mut() {
+                picker.save_error = Some("the theme could not be saved".to_string());
             }
-            Err(err) => {
-                self.config.appearance.theme = previous;
-                picker.save_error = Some(format!("{err:#}"));
-                vec![]
-            }
+            return commands;
         }
+
+        self.theme_picker = None;
+        self.push_log(LogLevel::Info, format!("Theme saved: {chosen}"));
+        commands
     }
 
     fn key_login(&mut self, key: KeyEvent) -> Vec<Command> {
@@ -4322,10 +4358,11 @@ impl App {
         match key.code {
             // Submit. Ctrl+G for "go", and F5 as an alternative bound elsewhere.
             KeyCode::Char('g') => return self.submit(),
-            // Save the current form values back to config.toml as the defaults.
-            KeyCode::Char('s') => {
-                self.save_preset();
-            }
+            // Save the current form values back to config.toml as the
+            // defaults. The commands are forwarded rather than dropped: the
+            // worker has to be told, or it keeps building backends from the
+            // settings the file no longer holds.
+            KeyCode::Char('s') => return self.save_preset(),
             KeyCode::Char('w') => {
                 let field = self.field();
                 if let Some(input) = self.inputs.get_mut(&field) {
@@ -4790,7 +4827,7 @@ impl App {
         );
         // Saved so the choice survives a restart, and so the worker sees a
         // config that matches the form.
-        self.save_appearance()
+        self.save_settings()
     }
 
     /// Put the active profile's settings into the form.
@@ -4834,34 +4871,37 @@ impl App {
         }
     }
 
-    fn save_preset(&mut self) {
+    fn save_preset(&mut self) -> Vec<Command> {
         let plan = self.plan();
-        let mut config = self.config.clone();
         let saved = PresetConfig::from_plan(&plan, &self.selected);
-        // Into the active profile, so Ctrl+S means "keep this" rather than
-        // "overwrite the one unnamed set of settings".
-        let name = config.active_profile.trim().to_string();
+        let name = self.config.active_profile.trim().to_string();
         let label = if name.is_empty() {
-            config.preset = saved;
             "your defaults".to_string()
         } else {
-            config.profile.insert(name.clone(), saved);
             format!("the {name} profile")
         };
 
-        match config.save() {
-            Ok(()) => {
-                self.config = config;
-                self.push_log(
-                    LogLevel::Success,
-                    format!("Saved these settings as {label}."),
-                );
-                self.notify(super::toast::Level::Success, "Saved to config.toml.");
+        // Through `persist`, which is what gives this the `ReloadConfig` it
+        // used to forget: Ctrl+S wrote the file and left the worker building
+        // backends from settings the file no longer held.
+        let commands = self.persist("your stream settings", move |config| {
+            // Into the active profile, so Ctrl+S means "keep this" rather
+            // than "overwrite the one unnamed set of settings".
+            if name.is_empty() {
+                config.preset = saved;
+            } else {
+                config.profile.insert(name, saved);
             }
-            Err(err) => {
-                self.push_log(LogLevel::Error, format!("Could not save config: {err:#}"));
-            }
+        });
+
+        if !commands.is_empty() {
+            self.push_log(
+                LogLevel::Success,
+                format!("Saved these settings as {label}."),
+            );
+            self.notify(super::toast::Level::Success, "Saved to config.toml.");
         }
+        commands
     }
 
     // -- Screen 3: the dashboard --------------------------------------------
@@ -7254,6 +7294,54 @@ mod tests {
             result: Ok(()),
         });
         assert!(!app.logged_in[&Platform::Twitch]);
+    }
+
+    /// Ctrl+S wrote config.toml and forgot to tell the worker, which holds
+    /// its own copy and would carry on building backends from settings the
+    /// file no longer held.
+    #[test]
+    fn saving_the_preset_reloads_the_worker() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("persist-preset");
+        let mut app = app_on_form();
+        app.inputs
+            .get_mut(&Field::Title)
+            .unwrap()
+            .set("a new title");
+
+        let commands = app.save_preset();
+
+        assert!(
+            matches!(commands.as_slice(), [Command::ReloadConfig(_)]),
+            "the worker has to be told: {commands:?}"
+        );
+        assert_eq!(app.config.preset.title, "a new title");
+    }
+
+    /// A failed write must not leave the interface and the file disagreeing.
+    /// The layout editor used to assign `self.layout` and clear `dirty`
+    /// *before* attempting the save, so a failure left an arrangement on
+    /// screen that was not in the file and was no longer offered for saving.
+    #[test]
+    fn a_failed_save_changes_nothing() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("persist-failure");
+        let mut app = app();
+        let before = app.config.appearance.theme.clone();
+
+        // A path that cannot be written: the parent is a file, not a
+        // directory, so `write_secret_file` fails.
+        let blocker = _scratch.path().join("not-a-directory");
+        std::fs::write(&blocker, b"x").expect("writing the blocker");
+        app.config.source_path = Some(blocker.join("config.toml"));
+
+        let commands = app.persist("the theme", |config| {
+            config.appearance.theme = "something-else".into()
+        });
+
+        assert!(commands.is_empty(), "a failed save issues no reload");
+        assert_eq!(
+            app.config.appearance.theme, before,
+            "and leaves the held config untouched"
+        );
     }
 
     /// Every field `is_text_input` claims is editable must actually have one.
