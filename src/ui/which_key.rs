@@ -384,7 +384,7 @@ fn describe_count(count: usize) -> String {
 /// and from [`Context::Global`] are both shown, because both are in force,
 /// and they are grouped by subject so related keys sit together rather than
 /// being scattered by alphabetical accident.
-pub fn draw_all(frame: &mut Frame, area: Rect, keymap: &Keymap, context: Context) {
+pub fn draw_all(frame: &mut Frame, area: Rect, keymap: &Keymap, context: Context, scroll: u16) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -481,17 +481,30 @@ pub fn draw_all(frame: &mut Frame, area: Rect, keymap: &Keymap, context: Context
         )));
     }
 
-    // Clipped, not scrolled: this function has no state to hold a scroll
-    // position in, and inventing one here would make it something the caller
-    // has to drive.
-    lines.truncate(rows[0].height as usize);
-    frame.render_widget(Paragraph::new(lines), rows[0]);
+    // Scrolled, not clipped. This listing promises *every* binding, and on an
+    // 80x24 terminal it used to show roughly the first eighteen and drop the
+    // rest with no ellipsis, no count and no way to reach them — which is
+    // most of them, since there are more than eighty.
+    let height = rows[0].height as usize;
+    let total = lines.len();
+    let offset = usize::from(scroll).min(total.saturating_sub(height));
 
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "esc cancel",
-            Style::new().fg(sk.muted),
-        ))),
+        Paragraph::new(lines).scroll((offset as u16, 0)),
+        rows[0],
+    );
+
+    let footer = if total > height {
+        format!(
+            "{}-{} of {total}   j/k scroll · esc cancel",
+            offset + 1,
+            (offset + height).min(total)
+        )
+    } else {
+        "esc cancel".to_string()
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(footer, Style::new().fg(sk.muted)))),
         rows[1],
     );
 }
@@ -518,10 +531,41 @@ mod tests {
     }
 
     fn render_all(width: u16, height: u16, context: Context) -> String {
+        render_all_at(width, height, context, 0)
+    }
+
+    fn render_all_at(width: u16, height: u16, context: Context, scroll: u16) -> String {
         let keymap = Keymap::default();
         render(width, height, |frame| {
-            draw_all(frame, frame.area(), &keymap, context)
+            draw_all(frame, frame.area(), &keymap, context, scroll)
         })
+    }
+
+    /// The listing promises *every* binding and there are more than eighty of
+    /// them, so on an ordinary terminal it used to show the first eighteen
+    /// and drop the rest with no ellipsis, no count and no way to reach them.
+    #[test]
+    fn the_full_listing_scrolls_rather_than_clipping() {
+        let top = render_all_at(80, 24, Context::Chat, 0);
+        let lower = render_all_at(80, 24, Context::Chat, 12);
+
+        assert_ne!(top, lower, "scrolling has to change what is on screen");
+        assert!(
+            top.contains(" of "),
+            "the footer says how much there is: {top}"
+        );
+        assert!(top.contains("j/k scroll"), "and how to reach it: {top}");
+    }
+
+    /// Scrolling past the end shows the last screenful rather than empty
+    /// space, so `G` lands somewhere useful.
+    #[test]
+    fn scrolling_past_the_end_stops_at_the_last_screenful() {
+        let far = render_all_at(80, 24, Context::Chat, u16::MAX);
+        assert!(
+            far.trim().lines().count() > 3,
+            "the end of the list is still a list: {far}"
+        );
     }
 
     fn render(width: u16, height: u16, mut body: impl FnMut(&mut Frame)) -> String {
@@ -669,7 +713,7 @@ mod tests {
                 height: 0,
             };
             draw(frame, empty, &keymap, Context::Global, &prefix);
-            draw_all(frame, empty, &keymap, Context::Global);
+            draw_all(frame, empty, &keymap, Context::Global, 0);
         });
         assert!(
             screen.trim().is_empty(),

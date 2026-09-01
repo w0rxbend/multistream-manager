@@ -404,6 +404,12 @@ pub struct App {
     pub pending_keys: Vec<crate::keys::Key>,
     /// Whether the which-key popup is showing every binding at once.
     pub which_key_all: bool,
+    /// How far the full binding listing is scrolled.
+    ///
+    /// It promises every binding and there are more than eighty of them, so
+    /// on any ordinary terminal most were off the bottom with no way to reach
+    /// them.
+    pub which_key_scroll: u16,
 
     /// The command palette, while it is open.
     pub command_palette: Option<super::command_palette::CommandPalette>,
@@ -531,6 +537,7 @@ impl App {
             keymap,
             pending_keys: Vec::new(),
             which_key_all: false,
+            which_key_scroll: 0,
             obs_focus: ObsFocus::Scenes,
             obs_scene_cursor: 0,
             obs_audio_cursor: 0,
@@ -976,7 +983,10 @@ impl App {
                 self.toasts.dismiss_all();
                 self.toasts.open_history();
             }
-            Action::WhichKey => self.which_key_all = true,
+            Action::WhichKey => {
+                self.which_key_all = true;
+                self.which_key_scroll = 0;
+            }
             Action::ThemePicker => {
                 self.theme_picker = Some(super::theme_picker::ThemePicker::open(
                     &self.config.appearance.theme,
@@ -2756,6 +2766,37 @@ impl App {
         // the screen, so acting on anything underneath would act on
         // something that cannot be seen.
         if self.which_key_all {
+            // Scrollable rather than dismissed-by-anything: a listing that
+            // shows a fifth of what it promises and closes on the key you
+            // pressed to see more is worse than no listing.
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.which_key_scroll = self.which_key_scroll.saturating_add(1);
+                    return vec![];
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.which_key_scroll = self.which_key_scroll.saturating_sub(1);
+                    return vec![];
+                }
+                KeyCode::PageDown => {
+                    self.which_key_scroll = self.which_key_scroll.saturating_add(10);
+                    return vec![];
+                }
+                KeyCode::PageUp => {
+                    self.which_key_scroll = self.which_key_scroll.saturating_sub(10);
+                    return vec![];
+                }
+                KeyCode::Char('g') | KeyCode::Home => {
+                    self.which_key_scroll = 0;
+                    return vec![];
+                }
+                KeyCode::Char('G') | KeyCode::End => {
+                    // Clamped where the line count is known, in the drawing.
+                    self.which_key_scroll = u16::MAX;
+                    return vec![];
+                }
+                _ => {}
+            }
             self.which_key_all = false;
             return vec![];
         }

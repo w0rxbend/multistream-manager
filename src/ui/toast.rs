@@ -276,6 +276,56 @@ pub fn draw(frame: &mut Frame, area: Rect, toasts: &Toasts, now: Instant) {
 }
 
 /// Draw the modal message history over the whole area.
+/// Break `text` into chunks that each fit `width` terminal cells.
+///
+/// On word boundaries where it can, mid-word only when a single word is wider
+/// than the pane. By display width and grapheme cluster rather than by `char`,
+/// because an emoji or a CJK character takes two cells while counting as one
+/// — measuring the wrong unit is how a "wrapped" line still overflows.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    use unicode_width::UnicodeWidthStr as _;
+
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    let mut used = 0usize;
+
+    let push_cluster = |cluster: &str, line: &mut String, used: &mut usize, out: &mut Vec<String>| {
+        let cell = cluster.width();
+        if *used + cell > width && !line.is_empty() {
+            out.push(std::mem::take(line));
+            *used = 0;
+        }
+        line.push_str(cluster);
+        *used += cell;
+    };
+
+    for word in text.split_inclusive(' ') {
+        let word_width = word.width();
+        if used + word_width > width && !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        if word_width > width {
+            // A single word wider than the pane has to be broken somewhere.
+            for cluster in word.graphemes(true) {
+                push_cluster(cluster, &mut line, &mut used, &mut out);
+            }
+        } else {
+            line.push_str(word);
+            used += word_width;
+        }
+    }
+    if !line.is_empty() || out.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
 pub fn draw_history(frame: &mut Frame, area: Rect, toasts: &Toasts) {
     let sk = theme::skin();
     frame.render_widget(Clear, area);
@@ -305,28 +355,53 @@ pub fn draw_history(frame: &mut Frame, area: Rect, toasts: &Toasts) {
             rows[0],
         );
     } else {
-        // Show a window ending `history_scroll` lines back from the newest,
+        // Show a window ending `history_scroll` entries back from the newest,
         // so scrolling walks backwards through the session.
         let end = history.len().saturating_sub(toasts.history_scroll);
-        let start = end.saturating_sub(height);
-        let lines: Vec<Line> = history
-            .iter()
-            .take(end)
-            .skip(start)
-            .map(|toast| {
-                Line::from(vec![
-                    Span::styled(
-                        toast.at.format("%H:%M:%S ").to_string(),
-                        Style::new().fg(sk.muted),
-                    ),
-                    Span::styled(
-                        format!("{} ", toast.level.glyph()),
-                        Style::new().fg(toast.level.color()),
-                    ),
-                    Span::styled(toast.text.clone(), Style::new().fg(sk.foreground)),
-                ])
-            })
-            .collect();
+
+        // Wrapped here rather than by the widget. The pop-up that carried the
+        // same message wraps; the history — which exists precisely so a long
+        // error can be read after it has flashed past — did not, so anything
+        // wider than the pane was cut off at the right edge and the detail
+        // worth keeping was the detail that went missing.
+        //
+        // Wrapping has to happen before the window is chosen, or a long entry
+        // would push the *newest* rows off the bottom, which is the wrong end
+        // to lose.
+        const GUTTER: usize = 11;
+        let body_width = (rows[0].width as usize).saturating_sub(GUTTER).max(8);
+
+        let mut lines: Vec<Line> = Vec::new();
+        for toast in history.iter().take(end) {
+            let mut first = true;
+            for chunk in wrap_text(&toast.text, body_width) {
+                lines.push(if first {
+                    first = false;
+                    Line::from(vec![
+                        Span::styled(
+                            toast.at.format("%H:%M:%S ").to_string(),
+                            Style::new().fg(sk.muted),
+                        ),
+                        Span::styled(
+                            format!("{} ", toast.level.glyph()),
+                            Style::new().fg(toast.level.color()),
+                        ),
+                        Span::styled(chunk, Style::new().fg(sk.foreground)),
+                    ])
+                } else {
+                    // Indented past the timestamp and glyph columns, so a
+                    // wrapped entry still reads as one entry.
+                    Line::from(Span::styled(
+                        format!("{}{chunk}", " ".repeat(GUTTER)),
+                        Style::new().fg(sk.foreground),
+                    ))
+                });
+            }
+        }
+
+        // The newest rows are the ones to keep when there are more than fit.
+        let first_row = lines.len().saturating_sub(height);
+        let lines: Vec<Line> = lines.into_iter().skip(first_row).collect();
         frame.render_widget(Paragraph::new(lines), rows[0]);
     }
 
@@ -361,6 +436,43 @@ fn blend(base: Color, toward: Color, amount: f64) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The history exists so a long error can be read after it has flashed
+    /// past; it rendered each entry as one unwrapped line, so anything wider
+    /// than the pane was cut off at the right edge — losing exactly the
+    /// detail it was opened for.
+    #[test]
+    fn a_long_entry_wraps_rather_than_being_cut_off() {
+        let text = "the token endpoint answered with something that is not JSON, and here is \
+                    a great deal more explanation that will not fit on one line of any \
+                    ordinary terminal";
+        let chunks = super::wrap_text(text, 40);
+
+        assert!(chunks.len() > 1, "it has to wrap: {chunks:?}");
+        for chunk in &chunks {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(chunk.as_str()) <= 40,
+                "{chunk:?} is wider than the pane"
+            );
+        }
+        assert_eq!(
+            chunks.join("").split_whitespace().collect::<Vec<_>>(),
+            text.split_whitespace().collect::<Vec<_>>(),
+            "no words may be lost or duplicated"
+        );
+    }
+
+    /// A word wider than the pane still has to appear, broken by grapheme
+    /// rather than dropped or overflowing.
+    #[test]
+    fn a_word_wider_than_the_pane_is_broken_rather_than_lost() {
+        let chunks = super::wrap_text(&"x".repeat(100), 20);
+        assert!(chunks.len() >= 5);
+        for chunk in &chunks {
+            assert!(unicode_width::UnicodeWidthStr::width(chunk.as_str()) <= 20);
+        }
+        assert_eq!(chunks.join("").len(), 100);
+    }
 
     const BASE: Duration = Duration::from_secs(5);
 

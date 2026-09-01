@@ -74,6 +74,10 @@ Two other ways to find something:
 
 * <kbd>&lt;Leader&gt;</kbd> <kbd>?</kbd> lists **every** binding in force,
   including the ones you have changed yourself.
+* <kbd>&lt;Leader&gt;</kbd> <kbd>?</kbd> lists **every binding** in force. It
+  scrolls with <kbd>j</kbd>/<kbd>k</kbd>, <kbd>PgUp</kbd>/<kbd>PgDn</kbd> and
+  <kbd>g</kbd>/<kbd>G</kbd>, and says where you are in the list — there are
+  more than eighty bindings and no terminal shows them all at once.
 * <kbd>Ctrl</kbd>+<kbd>P</kbd> opens the **command palette**: every action in
   the program, filtered as you type, each row showing the key that runs it. Using
   the palette teaches you the key you could have pressed, so over time you stop

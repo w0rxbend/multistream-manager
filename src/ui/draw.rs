@@ -63,7 +63,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Every binding at once, which is its own screen.
     if app.which_key_all {
-        super::which_key::draw_all(frame, frame.area(), &app.keymap, app.key_context());
+        super::which_key::draw_all(
+            frame,
+            frame.area(),
+            &app.keymap,
+            app.key_context(),
+            app.which_key_scroll,
+        );
         return;
     }
 
