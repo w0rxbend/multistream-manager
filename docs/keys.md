@@ -225,6 +225,34 @@ live, and the live statistics afterwards.
 Going live is <kbd>Ctrl</kbd>+<kbd>G</kbd> from inside the form, and
 <kbd>&lt;Leader&gt;</kbd> <kbd>s</kbd> <kbd>g</kbd> from anywhere.
 
+### The pre-flight check
+
+Neither key goes live straight away. Both open a checklist of everything this
+program already knows and used to keep to itself until something failed:
+
+- each selected platform's credentials, login, and whether the token can renew
+  itself for the length of a broadcast;
+- whether the login predates a permission a newer feature needs;
+- the stream details, checked exactly as the form checks them;
+- **which OBS audio inputs are muted** — the reason this screen exists;
+- the selected OBS scene, whether OBS is already streaming, and free disk.
+
+| Key | What it does |
+|---|---|
+| <kbd>Enter</kbd> | Go live on every selected platform, and ask OBS to start streaming |
+| <kbd>r</kbd> | Take the checks again, after fixing something in OBS itself |
+| <kbd>Esc</kbd> | Back to the form; nothing has been sent |
+
+Rows are shown worst first. A <kbd>✖</kbd> row stops <kbd>Enter</kbd> and says
+which one; a <kbd>!</kbd> row does not — muting the desktop audio on purpose is
+completely normal, and only you know which input is the microphone.
+
+OBS is started with an explicit start request rather than a toggle, so a stream
+you had already begun by hand is left running rather than stopped. If OBS
+control is switched off, or OBS is not connected, the metadata is still written
+to both platforms and the checklist says you will have to start the stream
+yourself.
+
 > [!WARNING]
 > <kbd>y</kbd> and <kbd>Y</kbd> **copy** a stream key; nothing anywhere
 > **shows** one. The value travels from the API to the system clipboard inside a

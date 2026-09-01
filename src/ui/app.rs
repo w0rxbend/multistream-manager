@@ -250,6 +250,11 @@ pub struct App {
     pub auto_stop: bool,
 
     pub popup: Option<Popup>,
+    /// The pre-flight checklist, while it is on screen.
+    ///
+    /// Computed when the overlay opens rather than every frame, because it
+    /// reads the token store off disk. `None` means the overlay is closed.
+    pub preflight: Option<Vec<crate::preflight::Check>>,
     /// Incremented on every keystroke that triggers a search, so that a slow
     /// reply to an earlier keystroke can be recognised as stale and dropped.
     pub search_generation: u64,
@@ -477,6 +482,7 @@ impl App {
             auto_start: plan.youtube_auto_start,
             auto_stop: plan.youtube_auto_stop,
             popup: None,
+            preflight: None,
             end_armed: None,
             search_generation: 0,
             go_generation: 0,
@@ -912,7 +918,7 @@ impl App {
                 }
             }
 
-            Action::GoLive => return self.submit(),
+            Action::GoLive => return self.go_live_key(),
             Action::EndStream => return self.end_stream(),
             Action::EditStreamInfo => {
                 self.go_to(Screen::Form);
@@ -2219,6 +2225,13 @@ impl App {
         if self.splash_is_showing() {
             self.splash_skipped = true;
             return vec![];
+        }
+
+        // The pre-flight checklist is modal. It covers the form it was opened
+        // from, and it exists to be read before a decision is made, so a key
+        // meant for the screen underneath must not slip past it.
+        if self.preflight.is_some() {
+            return self.key_preflight(key);
         }
 
         // The command palette owns the keyboard while it is open, because
@@ -3570,6 +3583,99 @@ impl App {
         vec![Command::EndLive]
     }
 
+    /// Keys on the pre-flight checklist.
+    ///
+    /// Deliberately few. This is a screen for reading and then deciding one
+    /// thing, so it has the two answers to that decision plus a way to look
+    /// again after fixing something in another window.
+    fn key_preflight(&mut self, key: KeyEvent) -> Vec<Command> {
+        match key.code {
+            KeyCode::Enter => return self.confirm_preflight(),
+            KeyCode::Esc | KeyCode::Char('q') => self.preflight = None,
+            // Re-check, for after unmuting the microphone in OBS itself.
+            KeyCode::Char('r') => self.open_preflight(),
+            _ => {}
+        }
+        vec![]
+    }
+
+    /// Take the pre-flight snapshot and put it on screen.
+    ///
+    /// The checks read the token store, so this is done once here rather than
+    /// while drawing.
+    fn open_preflight(&mut self) {
+        let store = crate::auth::store::TokenStore::load().unwrap_or_default();
+        let plan = self.plan();
+        let obs = self.config.obs.enabled.then_some(&self.obs);
+        let tokens = |platform: Platform| store.get(platform).cloned();
+
+        self.preflight = Some(crate::preflight::run(&crate::preflight::Inputs {
+            config: &self.config,
+            plan: &plan,
+            platforms: &self.selected,
+            tokens: &tokens,
+            obs,
+        }));
+    }
+
+    /// The go-live key: show the checklist rather than launching straight in.
+    ///
+    /// Everything on that list is something this program already knew and
+    /// used to keep to itself until it failed — a muted microphone, a login
+    /// that cannot renew itself, an empty title. Fifteen seconds of reading
+    /// beats forty minutes of silent broadcast.
+    fn go_live_key(&mut self) -> Vec<Command> {
+        if self.busy {
+            self.notify(super::toast::Level::Warning, "Already working — hold on.");
+            return vec![];
+        }
+        self.open_preflight();
+        vec![]
+    }
+
+    /// Enter on the pre-flight screen: go live, and start OBS with it.
+    fn confirm_preflight(&mut self) -> Vec<Command> {
+        let Some(checks) = self.preflight.as_ref() else {
+            return vec![];
+        };
+
+        if crate::preflight::worst(checks) == crate::preflight::Severity::Blocking {
+            // Naming the first blocker rather than saying "there are
+            // problems": the list is right there, but the toast is what the
+            // eye goes to after pressing a key that did nothing.
+            let first = checks
+                .iter()
+                .find(|check| check.severity == crate::preflight::Severity::Blocking)
+                .map(|check| check.summary.clone())
+                .unwrap_or_default();
+            self.notify(
+                super::toast::Level::Warning,
+                format!("Not ready: {first}"),
+            );
+            return vec![];
+        }
+
+        // Whether to start OBS is decided here, while the snapshot that was
+        // checked is still the one on screen.
+        let start_obs = self.config.obs.enabled && self.obs.is_connected() && !self.obs.streaming;
+        self.preflight = None;
+
+        let commands = self.submit();
+        if commands.is_empty() {
+            // `submit` refused for a reason of its own; do not touch OBS.
+            return commands;
+        }
+
+        if start_obs {
+            // Explicitly start, never toggle: a toggle would stop a stream
+            // that had already been started by hand between the check and
+            // this keystroke.
+            self.obs_command(crate::obs::task::Command::SetStreaming(true));
+            self.push_log(LogLevel::Info, "Asked OBS to start streaming.");
+        }
+        commands
+    }
+
     fn submit(&mut self) -> Vec<Command> {
         self.popup = None;
 
@@ -4254,6 +4360,66 @@ mod tests {
         let commands = app.submit();
         assert!(matches!(commands.as_slice(), [Command::GoLive { .. }]));
         assert!(app.busy);
+    }
+
+    /// Going live opens the checklist rather than launching straight in.
+    /// The whole feature is fifteen seconds of reading in place of forty
+    /// minutes of silent broadcast.
+    #[test]
+    fn the_go_live_key_shows_the_checklist_first() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("preflight-open");
+        let mut app = app_on_form();
+        app.inputs
+            .get_mut(&Field::Title)
+            .unwrap()
+            .set("A good title");
+
+        let commands = app.go_live_key();
+
+        assert!(
+            commands.is_empty(),
+            "nothing must be sent before the user has seen the list"
+        );
+        assert!(app.preflight.is_some(), "the checklist has to be on screen");
+        assert!(!app.busy, "opening a checklist is not work");
+    }
+
+    /// Enter on a checklist with a blocking row must refuse, and say which
+    /// row — the list is right there, but the toast is what the eye goes to
+    /// after pressing a key that appeared to do nothing.
+    #[test]
+    fn enter_on_a_blocked_checklist_refuses_and_names_the_reason() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("preflight-blocked");
+        let mut app = app_on_form();
+        // No title and no login: comfortably blocking.
+        app.go_live_key();
+
+        let commands = app.confirm_preflight();
+
+        assert!(commands.is_empty(), "a blocked plan must not be submitted");
+        assert!(
+            app.preflight.is_some(),
+            "the list stays up so the problem can be read"
+        );
+        assert!(
+            !app.toasts.visible_text().is_empty(),
+            "the refusal has to be visible"
+        );
+    }
+
+    /// Esc goes back to the form with nothing sent and nothing changed.
+    #[test]
+    fn esc_closes_the_checklist_without_going_live() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("preflight-esc");
+        let mut app = app_on_form();
+        app.go_live_key();
+        assert!(app.preflight.is_some());
+
+        let commands = app.handle_key(key(KeyCode::Esc));
+
+        assert!(commands.is_empty());
+        assert!(app.preflight.is_none());
+        assert!(!app.busy);
     }
 
     #[test]

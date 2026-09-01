@@ -67,6 +67,13 @@ pub enum Command {
     ToggleStream,
     ToggleRecord,
     ToggleRecordPause,
+    /// Start or stop streaming explicitly, for callers that know which end
+    /// state they want.
+    ///
+    /// The toggle above is right for a key somebody presses; this is for
+    /// anything that means "make sure it is on" — the pre-flight go-live, for
+    /// one — where a toggle would stop a stream that was already running.
+    SetStreaming(bool),
     /// Give up on the current connection and start again immediately, rather
     /// than waiting out the backoff.
     Reconnect,
@@ -888,6 +895,15 @@ async fn run_command(
         }
         Command::ToggleRecord => {
             ask(sink, source, pending, state, requests::toggle_record()).await?;
+            poll_status(sink, source, pending, state).await?;
+        }
+        Command::SetStreaming(on) => {
+            let request = if on {
+                requests::start_stream()
+            } else {
+                requests::stop_stream()
+            };
+            ask(sink, source, pending, state, request).await?;
             poll_status(sink, source, pending, state).await?;
         }
         Command::ToggleRecordPause => {

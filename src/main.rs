@@ -31,6 +31,7 @@ mod model;
 mod notify;
 mod obs;
 mod paths;
+mod preflight;
 mod telemetry;
 mod theme;
 mod twitch;

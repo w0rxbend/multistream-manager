@@ -97,6 +97,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
 
+    // The pre-flight checklist. Above the pop-ups, because it is a decision
+    // screen and a toast drawn over the row explaining why you cannot go live
+    // would be covering the answer.
+    if let Some(checks) = &app.preflight {
+        draw_preflight(frame, frame.area(), checks);
+        return;
+    }
+
     if let Some(palette) = &app.command_palette {
         super::command_palette::draw(
             frame,
@@ -117,6 +125,91 @@ pub fn draw(frame: &mut Frame, app: &App) {
             picker,
             &app.config.appearance.custom_theme.to_palette(),
         );
+    }
+}
+
+/// The pre-flight checklist, drawn over whatever it was opened from.
+///
+/// One row per check, worst first, each with its glyph and — where there is
+/// something to do about it — the advice indented underneath. The footer says
+/// what the two keys do and, when something is blocking, why Enter will
+/// refuse.
+fn draw_preflight(frame: &mut Frame, area: Rect, checks: &[crate::preflight::Check]) {
+    use crate::preflight::Severity;
+
+    let sk = crate::theme::skin();
+    let worst = crate::preflight::worst(checks);
+
+    // A box in the middle rather than the whole screen: the form underneath
+    // stays visible at the edges, so it is clear what is being checked.
+    let area = centered(area, 78, checks.len() as u16 * 2 + 6);
+    frame.render_widget(Clear, area);
+
+    let (title, border) = match worst {
+        Severity::Ok => (" Pre-flight — ready to go live ", sk.success),
+        Severity::Warning => (" Pre-flight — worth a look ", sk.warning),
+        Severity::Blocking => (" Pre-flight — not ready ", sk.error),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(border))
+        .style(Style::new().bg(sk.canvas))
+        .title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(2)])
+        .horizontal_margin(1)
+        .split(inner);
+
+    // Worst first: the thing that needs doing should not be somewhere in the
+    // middle of a list of ticks.
+    let mut ordered: Vec<&crate::preflight::Check> = checks.iter().collect();
+    ordered.sort_by_key(|check| std::cmp::Reverse(check.severity));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for check in ordered {
+        let (glyph, colour) = match check.severity {
+            Severity::Ok => ("✓", sk.success),
+            Severity::Warning => ("!", sk.warning),
+            Severity::Blocking => ("✖", sk.error),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {glyph} "), Style::new().fg(colour)),
+            Span::raw(check.summary.clone()),
+        ]));
+        if !check.advice.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("   {}", check.advice),
+                Style::new().fg(sk.muted),
+            )));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        rows[0],
+    );
+
+    let hint = match worst {
+        Severity::Blocking => "Fix the ✖ rows first · r re-check · esc go back",
+        _ => "enter go live (and start OBS) · r re-check · esc go back",
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(hint, Style::new().fg(sk.muted)))),
+        rows[1],
+    );
+}
+
+/// A box of at most `width` × `height`, centred in `area`.
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
     }
 }
 
@@ -1377,6 +1470,41 @@ mod tests {
         assert!(
             !screen.contains("Where are you streaming?"),
             "the platform picker is useless without credentials"
+        );
+    }
+
+    /// The pre-flight list has to reach the screen, and has to lead with the
+    /// row that is stopping you rather than burying it among the ticks.
+    #[test]
+    fn the_preflight_overlay_shows_the_blocking_row_first() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("draw-preflight");
+        let mut app = App::new(Config::default());
+        app.splash_skipped = true;
+        app.screen = Screen::Form;
+        app.selected = vec![crate::model::Platform::Twitch];
+        app.preflight = Some(vec![
+            crate::preflight::Check {
+                severity: crate::preflight::Severity::Ok,
+                summary: "Everything is fine here".into(),
+                advice: String::new(),
+            },
+            crate::preflight::Check {
+                severity: crate::preflight::Severity::Blocking,
+                summary: "Twitch: not logged in".into(),
+                advice: "Log in under Config → Accounts.".into(),
+            },
+        ]);
+
+        let screen = render(&app, 100, 30);
+
+        assert!(screen.contains("not ready"), "the title says so: {screen}");
+        assert!(screen.contains("Twitch: not logged in"), "{screen}");
+        assert!(screen.contains("Log in under Config"), "{screen}");
+        let blocking = screen.find("not logged in").expect("the blocking row");
+        let fine = screen.find("Everything is fine").expect("the ok row");
+        assert!(
+            blocking < fine,
+            "the blocking row has to come first, not be buried among ticks: {screen}"
         );
     }
 

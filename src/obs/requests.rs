@@ -137,6 +137,27 @@ pub fn toggle_record() -> Request {
     request("ToggleRecord")
 }
 
+/// Start streaming, whatever it was doing before.
+///
+/// The toggle above is right for a key somebody presses, because the state
+/// this program holds can always be a moment out of date and a toggle cannot
+/// act on a stale belief about which way round things are. It is wrong
+/// wherever the *intent* is known: a scripted or chained "now go live" that
+/// sends a toggle will stop a stream that had already been started by hand.
+///
+/// OBS answers a start request for an already-started stream with an error
+/// (`OutputRunning`), which is exactly the right outcome — nothing changes
+/// and the caller is told — where a toggle would have taken the stream down.
+pub fn start_stream() -> Request {
+    request("StartStream")
+}
+
+/// Stop streaming, whatever it was doing before. See [`start_stream`].
+pub fn stop_stream() -> Request {
+    request("StopStream")
+}
+
+
 /// Pause or resume an in-progress recording.
 pub fn toggle_record_pause() -> Request {
     request("ToggleRecordPause")
@@ -178,6 +199,16 @@ mod tests {
         let collection = set_current_scene_collection("Podcast");
         let data = collection.request_data.expect("data");
         assert_eq!(data["sceneCollectionName"], "Podcast");
+    }
+
+    /// The explicit start and stop are not the toggle, and getting them the
+    /// wrong way round would mean the pre-flight go-live ends the stream it
+    /// was asked to begin.
+    #[test]
+    fn starting_and_stopping_are_distinct_from_toggling() {
+        assert_eq!(start_stream().request_type, "StartStream");
+        assert_eq!(stop_stream().request_type, "StopStream");
+        assert_eq!(toggle_stream().request_type, "ToggleStream");
     }
 
     /// A request with nothing to say must not send an empty object: OBS
