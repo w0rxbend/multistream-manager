@@ -1309,6 +1309,30 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App) {
     // per-platform panels. Named distinctly so it cannot shadow `areas`, whose
     // second slot is still the log strip at the bottom.
     let upper = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(areas[0]);
+
+    // The total across every platform. Both report a viewer count and the
+    // dashboard made the reader add them up — while "how many people are
+    // watching" is the single number a multistreamer wants, and the whole
+    // point of streaming to two places at once.
+    let mut banner = banner;
+    let watching: u64 = live
+        .iter()
+        .filter_map(|platform| app.stats_for(*platform))
+        .filter(|stats| stats.live && stats.error.is_none())
+        .filter_map(|stats| stats.viewers)
+        .sum();
+    let counted = live
+        .iter()
+        .filter_map(|platform| app.stats_for(*platform))
+        .filter(|stats| stats.live && stats.error.is_none() && stats.viewers.is_some())
+        .count();
+    if counted > 1 {
+        banner.spans.push(Span::styled(
+            format!("   {watching} watching in total"),
+            Style::new().fg(sk.accent).add_modifier(Modifier::BOLD),
+        ));
+    }
+
     frame.render_widget(Paragraph::new(banner), upper[0]);
 
     // Give each platform an equal share of the width, side by side.
@@ -1395,10 +1419,27 @@ fn draw_platform_panel(frame: &mut Frame, area: Rect, app: &App, platform: Platf
     // Live statistics for this platform.
     if let Some(stats) = app.stats_for(platform) {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "── Live ──",
-            Style::new().fg(colour).add_modifier(Modifier::BOLD),
-        )));
+        // How old the numbers are. Replaced wholesale on each poll with no
+        // stamp, a frozen figure and a flat one looked identical — so a
+        // network hiccup read as a quiet stream.
+        let age = app
+            .stats_at
+            .map(|at| {
+                let seconds = at.elapsed().as_secs();
+                if seconds < 2 {
+                    "  just now".to_string()
+                } else {
+                    format!("  updated {seconds}s ago")
+                }
+            })
+            .unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::styled(
+                "── Live ──",
+                Style::new().fg(colour).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(age, Style::new().fg(sk.muted)),
+        ]));
 
         if let Some(error) = &stats.error {
             lines.push(Line::from(Span::styled(

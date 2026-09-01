@@ -514,6 +514,31 @@ impl StreamPlan {
             .collect()
     }
 
+    /// The tags Twitch will not receive as written, and why.
+    ///
+    /// `twitch_tags` strips punctuation, cuts each tag to 25 characters and
+    /// keeps the first ten — quietly. A chopped tag is a dead tag on Twitch
+    /// discovery, and the only thing validated was the *count*, so somebody
+    /// could type a careful set of tags and have half of them silently
+    /// become something else.
+    pub fn twitch_tag_changes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        for tag in &self.tags {
+            let cleaned: String = tag.chars().filter(|c| c.is_alphanumeric()).collect();
+            if cleaned.is_empty() {
+                notes.push(format!("{tag:?} has nothing Twitch accepts in it and is dropped"));
+                continue;
+            }
+            if cleaned.chars().count() > limits::TWITCH_TAG_LEN {
+                let cut: String = cleaned.chars().take(limits::TWITCH_TAG_LEN).collect();
+                notes.push(format!("{tag:?} is sent to Twitch as {cut:?}"));
+            } else if cleaned != *tag {
+                notes.push(format!("{tag:?} is sent to Twitch as {cleaned:?}"));
+            }
+        }
+        notes
+    }
+
     /// Build the YouTube title: the plain title with as many `#hashtags` appended
     /// as will fit inside YouTube's 100-character limit.
     ///
@@ -687,19 +712,18 @@ impl StreamPlan {
                     ),
                 });
             }
-            for tag in &self.tags {
-                if tag.chars().any(|c| !c.is_alphanumeric()) {
-                    issues.push(ValidationIssue {
-                        field: Field::Tags,
-                        blocking: false,
-                        message: format!(
-                            "Twitch tags cannot contain spaces or punctuation, so {:?} will be sent as {:?}.",
-                            tag,
-                            tag.chars().filter(|c| c.is_alphanumeric()).collect::<String>()
-                        ),
-                    });
-                    break;
-                }
+            // Every way a tag arrives at Twitch as something other than what
+            // was typed: punctuation stripped, cut at 25 characters, or left
+            // with nothing Twitch accepts and dropped entirely. Only the
+            // punctuation case was reported, and only for the first tag —
+            // the length cut and the outright drop were silent, and a
+            // chopped tag is a dead tag on Twitch discovery.
+            for note in self.twitch_tag_changes() {
+                issues.push(ValidationIssue {
+                    field: Field::Tags,
+                    blocking: false,
+                    message: format!("{note}."),
+                });
             }
         }
 
@@ -1042,6 +1066,33 @@ mod tests {
     fn parse_tags_trims_and_deduplicates_case_insensitively() {
         let tags = StreamPlan::parse_tags("  rust , RUST,  tui ,, gamedev,");
         assert_eq!(tags, vec!["rust", "tui", "gamedev"]);
+    }
+
+    /// The count was validated and the *content* was not. A tag cut at 25
+    /// characters, or stripped down to nothing, is a dead tag on Twitch
+    /// discovery — and both happened silently.
+    #[test]
+    fn every_way_a_tag_changes_on_the_way_to_twitch_is_reported() {
+        let long = "a".repeat(40);
+        let plan = plan_with("t", &["fine", "live coding", &long, "!!!"]);
+        let notes = plan.twitch_tag_changes();
+
+        assert!(
+            !notes.iter().any(|note| note.contains("\"fine\"")),
+            "a tag that survives unchanged needs no note: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|note| note.contains("live coding")),
+            "punctuation stripping is reported: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|note| note.contains(&long)),
+            "the 25-character cut is reported: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|note| note.contains("dropped")),
+            "a tag with nothing Twitch accepts is reported as dropped: {notes:?}"
+        );
     }
 
     #[test]

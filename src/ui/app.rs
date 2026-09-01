@@ -313,6 +313,8 @@ pub struct App {
     /// — a delete has to act on the list the user approved, not on whatever a
     /// second lookup happens to return.
     pub stale_broadcasts: Vec<crate::model::StaleBroadcast>,
+    /// When the statistics on screen were fetched.
+    pub stats_at: Option<std::time::Instant>,
     /// The reusable YouTube stream ids the last listing found, as
     /// `(id, title)`.
     ///
@@ -600,6 +602,7 @@ impl App {
             terminal_area: ratatui::layout::Rect::default(),
             logout_armed: None,
             stale_broadcasts: Vec::new(),
+            stats_at: None,
             youtube_streams: Vec::new(),
             reported_shortcut_clashes: std::collections::HashSet::new(),
             preflight: None,
@@ -2991,6 +2994,11 @@ impl App {
                 let stats: BTreeMap<Platform, PlatformStats> = stats.into_iter().collect();
                 self.notify_live_transitions(&stats);
                 self.stats = stats;
+                // When, so a frozen number and a flat one can be told apart.
+                // The map was replaced wholesale with no stamp, so during a
+                // network hiccup the dashboard showed the last good figures
+                // and looked exactly like a quiet stream.
+                self.stats_at = Some(std::time::Instant::now());
             }
         }
         vec![]
