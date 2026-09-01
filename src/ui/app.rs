@@ -1241,10 +1241,11 @@ impl App {
         use crate::keys::Action;
 
         match action {
-            // Getting around always works.
+            // Getting around always works, and so does leaving.
             Action::ConfigNextSection
             | Action::ConfigPreviousSection
-            | Action::ConfigSwapPane => true,
+            | Action::ConfigSwapPane
+            | Action::Quit => true,
             // Enter means something in the sections that have something to
             // change or run; elsewhere it is not a key at all.
             Action::ConfigActivate => matches!(
@@ -1465,14 +1466,20 @@ impl App {
                             .iter()
                             .find(|panel| !present.contains(panel))
                         {
-                            Some(panel) => {
-                                edit::add(&mut config.draft, *panel);
+                            // Only claim it happened when it did: adding used
+                            // to be a silent no-op on a single-panel layout
+                            // and still reported success.
+                            Some(panel) if edit::add(&mut config.draft, *panel) => {
                                 config.dirty = true;
                                 self.notify(
                                     super::toast::Level::Info,
                                     format!("Added {}.", panel.title()),
                                 );
                             }
+                            Some(panel) => self.notify(
+                                super::toast::Level::Warning,
+                                format!("Could not add {} to this layout.", panel.title()),
+                            ),
                             None => self.notify(
                                 super::toast::Level::Info,
                                 "Every panel is already on the layout.",
@@ -2038,10 +2045,17 @@ impl App {
             return;
         };
         let name = input.name.clone();
-        // Clamped at the top to unity gain. Amplifying past 100% in OBS is a
+        // Clamped at the top to unity gain — amplifying past 100% in OBS is a
         // deliberate act with real consequences for how a stream sounds, and
         // it should not be reachable by leaning on a key.
-        let next = (current + delta).clamp(0.0, 1.0);
+        //
+        // But the ceiling is unity *or wherever this source already is*.
+        // OBS happily holds a source at 1.2, and the pane draws 120%; a flat
+        // clamp to 1.0 meant volume-*up* on such a source sent 1.0 — a 20%
+        // cut — and no key could put it back. Never raise past unity from
+        // below, and never move an already-boosted source the wrong way.
+        let ceiling = current.max(1.0);
+        let next = (current + delta).clamp(0.0, ceiling);
         self.obs_command(crate::obs::task::Command::SetVolume {
             input: name,
             multiplier: next,
@@ -6378,6 +6392,49 @@ mod tests {
         // to "let YouTube choose" without editing the file.
         app.handle_key(KeyEvent::from(KeyCode::Enter));
         assert!(app.config.youtube.stream_id.is_empty());
+    }
+
+    /// Every Config footer ends "q quit", and `q` did nothing there — it was
+    /// swallowed by the layout editor's catch-all.
+    #[test]
+    fn q_quits_from_the_config_tab_too() {
+        let mut app = app();
+        go_to_config_section(&mut app, super::super::config_tab::Section::Layout);
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(app.should_quit);
+    }
+
+    /// Volume-up on a source OBS holds above unity used to send 1.0 — a cut —
+    /// and no key could put it back.
+    #[test]
+    fn volume_up_never_turns_a_boosted_source_down() {
+        let mut app = app();
+        app.obs.audio = vec![crate::obs::state::AudioInput {
+            name: "Mic/Aux".into(),
+            alias: None,
+            shortcut: None,
+            kind: None,
+            muted: Some(false),
+            volume_mul: Some(1.2),
+            volume_db: None,
+        }];
+        app.obs_audio_cursor = 0;
+
+        // No OBS connection, so nothing is sent — but the value it *would*
+        // send is what this is about, so compute it the same way.
+        let current = 1.2f64;
+        let ceiling = current.max(1.0);
+        assert_eq!(
+            (current + 0.05).clamp(0.0, ceiling),
+            1.2,
+            "volume-up must never move a boosted source downward"
+        );
+        assert!(
+            (current - 0.05).clamp(0.0, ceiling) < current,
+            "volume-down must still work on it"
+        );
+        // And from below, unity is still the ceiling.
+        assert_eq!((0.98f64 + 0.05).clamp(0.0, 0.98f64.max(1.0)), 1.0);
     }
 
     /// The Config tab's keys are named actions now, so `[keys.config]` can

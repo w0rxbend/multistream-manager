@@ -350,6 +350,9 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Config, "<Enter>",        Action::ConfigActivate),
     (Context::Config, "a",              Action::ConfigAddAccount),
     (Context::Config, "r",              Action::ConfigRefreshChecks),
+    // `q` quits from every other tab and every Config footer promised it did
+    // here too; it was swallowed by the layout editor's catch-all instead.
+    (Context::Config, "q",              Action::Quit),
 
     // <Leader>c — chat.
     (Context::Global, "<Leader>cc", Action::ChatCompose),

@@ -1180,12 +1180,42 @@ pub mod edit {
     }
 
     /// Add a panel beside the selected one.
-    pub fn add(layout: &mut PaneLayout, panel: Panel) {
-        if let crate::layout::Node::Split { children, .. } = &mut layout.root {
-            children.push(crate::layout::Child {
-                weight: 1,
-                node: crate::layout::Node::Panel(panel),
-            });
+    /// Returns whether the panel was actually added.
+    ///
+    /// The root is not always a split: removing panels calls `tidy`, which
+    /// replaces a one-child split with the child itself, so a layout reduced
+    /// to a single panel has a bare `Node::Panel` root. Pushing into that was
+    /// a silent no-op — and the caller announced "Added Chat." and marked the
+    /// draft dirty regardless, so the one case where adding is most obviously
+    /// wanted was the one case where it did nothing.
+    pub fn add(layout: &mut PaneLayout, panel: Panel) -> bool {
+        match &mut layout.root {
+            crate::layout::Node::Split { children, .. } => {
+                children.push(crate::layout::Child {
+                    weight: 1,
+                    node: crate::layout::Node::Panel(panel),
+                });
+                true
+            }
+            // A single panel becomes a split of the two, which is the only
+            // arrangement that can hold both.
+            root @ crate::layout::Node::Panel(_) => {
+                let existing = std::mem::replace(root, crate::layout::Node::Panel(panel));
+                *root = crate::layout::Node::Split {
+                    direction: crate::layout::Direction::Vertical,
+                    children: vec![
+                        crate::layout::Child {
+                            weight: 1,
+                            node: existing,
+                        },
+                        crate::layout::Child {
+                            weight: 1,
+                            node: crate::layout::Node::Panel(panel),
+                        },
+                    ],
+                };
+                true
+            }
         }
     }
 
@@ -1260,6 +1290,28 @@ pub mod edit {
 mod tests {
     use super::*;
     use crate::layout::Layout as PaneLayout;
+
+    /// Adding a panel to a layout reduced to one used to be a silent no-op —
+    /// `tidy` leaves a bare `Node::Panel` root and the old `add` only pushed
+    /// into a split — while the caller announced success either way.
+    #[test]
+    fn a_panel_can_be_added_to_a_single_panel_layout() {
+        let mut layout = PaneLayout::default();
+        // Remove down to one panel, which is what leaves a bare panel root.
+        while layout.panels().len() > 1 {
+            assert!(edit::remove(&mut layout, 0));
+        }
+        assert_eq!(layout.panels().len(), 1);
+
+        let missing = *crate::layout::Panel::ALL
+            .iter()
+            .find(|panel| !layout.panels().contains(panel))
+            .expect("something is not on a one-panel layout");
+
+        assert!(edit::add(&mut layout, missing), "adding has to report true");
+        assert_eq!(layout.panels().len(), 2);
+        assert!(layout.panels().contains(&missing));
+    }
 
     #[test]
     fn every_section_has_a_title_and_a_summary() {
