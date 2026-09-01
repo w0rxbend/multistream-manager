@@ -62,6 +62,13 @@ pub enum Command {
     LoginAdd(Platform),
     /// Forget a platform's saved login.
     Logout(Platform),
+    /// Forget one extra chat account by its token-store key.
+    ///
+    /// Separate from `Logout`, which removes the account you stream as.
+    /// `TokenStore::remove` only ever deleted the bare platform slug, so an
+    /// extra account added by mistake could not be taken out at all and its
+    /// refresh token stayed valid indefinitely.
+    ForgetAccount { key: String, label: String },
     /// Find the YouTube broadcasts that were created and never went live.
     ///
     /// `approved` is empty for the listing press. On the confirming press it
@@ -473,6 +480,25 @@ pub async fn run(
                 let _ = events.send(Event::LoggedOut {
                     platform,
                     result: outcome.map_err(|err| format!("{err:#}")),
+                });
+            }
+
+            Command::ForgetAccount { key, label } => {
+                let removing = key.clone();
+                let outcome =
+                    crate::auth::mutate_store(move |store| {
+                        store.remove_keyed(&removing);
+                    })
+                    .await;
+                let _ = events.send(match outcome {
+                    Ok(()) => Event::Log {
+                        level: LogLevel::Success,
+                        message: format!("Forgot {label}. Its token is no longer on disk."),
+                    },
+                    Err(err) => Event::Log {
+                        level: LogLevel::Error,
+                        message: format!("Could not forget {label}: {err:#}"),
+                    },
                 });
             }
 

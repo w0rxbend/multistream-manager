@@ -65,7 +65,7 @@ impl Section {
             }
             Section::Accounts => concat!(
                 " j/k move   tab pane   enter log in/out   a add a chat account",
-                "   esc back   q quit"
+                "   d forget an extra account   esc back   q quit"
             ),
             Section::Maintenance => {
                 " j/k move   tab pane   enter run   esc back   q quit"
@@ -229,7 +229,9 @@ impl ConfigTab {
             Section::Chat => CHAT_ROWS,
             Section::Keys => app.keymap.all().len(),
             Section::Obs => 0,
-            Section::Accounts => crate::model::Platform::ALL.len(),
+            // Every account the store holds, not one row per platform: the
+            // extra chat accounts were invisible and unremovable.
+            Section::Accounts => app.all_accounts().len().max(crate::model::Platform::ALL.len()),
             // The three jobs, plus a row per stream id the last listing
             // found, so one can be pinned without a text editor.
             Section::Maintenance => MAINTENANCE_ROWS + app.youtube_streams.len(),
@@ -921,55 +923,85 @@ fn draw_obs(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_accounts(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     let sk = theme::skin();
-    let mut lines: Vec<Line> = crate::model::Platform::ALL
-        .iter()
-        .enumerate()
-        .map(|(index, platform)| {
-            let selected = index == config.cursor && config.focus == Focus::Contents;
-            let logged_in = app.logged_in.get(platform).copied().unwrap_or(false);
-            // Who, not merely whether. With two accounts on one machine the
-            // only question at this screen is which one you are about to
-            // stream as, and the store has known the answer all along.
-            let state = match (logged_in, app.account_summary(*platform)) {
-                (true, Some((name, expires, renews))) => (
-                    format!(
-                        "logged in as {name} · {} · expires in {expires}",
+    let accounts = app.all_accounts();
+
+    // Every account the store holds. The section listed one row per platform
+    // while the store can hold any number of extra chat accounts, so an
+    // account added by mistake was invisible and its refresh token stayed
+    // valid indefinitely.
+    let mut lines: Vec<Line> = if accounts.is_empty() {
+        crate::model::Platform::ALL
+            .iter()
+            .enumerate()
+            .map(|(index, platform)| {
+                let selected = index == config.cursor && config.focus == Focus::Contents;
+                let mut line = Line::from(vec![
+                    Span::styled(
+                        if selected { "▸ " } else { "  " },
+                        Style::new().fg(sk.accent),
+                    ),
+                    Span::styled(
+                        format!("{:<10}", platform.label()),
+                        Style::new().fg(sk.foreground),
+                    ),
+                    Span::styled("not logged in", Style::new().fg(sk.muted)),
+                ]);
+                if selected {
+                    line = line.style(Style::new().bg(sk.selection));
+                }
+                line
+            })
+            .collect()
+    } else {
+        accounts
+            .iter()
+            .enumerate()
+            .map(|(index, (key, platform, label))| {
+                let selected = index == config.cursor && config.focus == Focus::Contents;
+                let primary = key == platform.slug();
+                let armed = primary && app.logout_armed == Some(*platform);
+
+                // Who, expiry and whether it renews — the store has known all
+                // of this and the screen showed two booleans, when with two
+                // accounts the only question here is which one you stream as.
+                let detail = match app.account_summary_for(key) {
+                    Some((expires, renews)) => format!(
+                        "{} · expires in {expires}",
                         if renews {
                             "renews automatically"
                         } else {
                             "no refresh token"
                         }
                     ),
-                    if renews { sk.success } else { sk.warning },
-                ),
-                (true, None) => ("logged in".to_string(), sk.success),
-                (false, _) => ("not logged in".to_string(), sk.muted),
-            };
-            let armed = app.logout_armed == Some(*platform);
-            let mut line = Line::from(vec![
-                Span::styled(
-                    if selected { "▸ " } else { "  " },
-                    Style::new().fg(sk.accent),
-                ),
-                Span::styled(
-                    format!("{:<10}", platform.label()),
-                    Style::new().fg(sk.foreground),
-                ),
-                if armed {
+                    None => "logged in".to_string(),
+                };
+
+                let mut line = Line::from(vec![
                     Span::styled(
-                        "press enter again to log out · esc cancels".to_string(),
-                        Style::new().fg(sk.error).add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::styled(state.0, Style::new().fg(state.1))
-                },
-            ]);
-            if selected {
-                line = line.style(Style::new().bg(sk.selection));
-            }
-            line
-        })
-        .collect();
+                        if selected { "▸ " } else { "  " },
+                        Style::new().fg(sk.accent),
+                    ),
+                    Span::styled(
+                        format!("{:<10}", platform.label()),
+                        Style::new().fg(sk.foreground),
+                    ),
+                    Span::styled(format!("{label}  "), Style::new().fg(sk.foreground)),
+                    if armed {
+                        Span::styled(
+                            "press enter again to log out · esc cancels".to_string(),
+                            Style::new().fg(sk.error).add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled(detail, Style::new().fg(sk.muted))
+                    },
+                ]);
+                if selected {
+                    line = line.style(Style::new().bg(sk.selection));
+                }
+                line
+            })
+            .collect()
+    };
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(

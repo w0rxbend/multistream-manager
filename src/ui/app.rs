@@ -33,6 +33,20 @@ fn saved_logins() -> BTreeMap<Platform, bool> {
         .collect()
 }
 
+/// Whether a connect failure means the saved login is no longer usable.
+///
+/// Deliberately narrow. A timeout or a 500 is the network having a bad
+/// moment and must not clear the login flag — the next attempt will work, and
+/// telling somebody they are logged out mid-stream because a packet went
+/// missing would be worse than the original problem. What this looks for is
+/// the platform saying the credential itself is no good.
+fn looks_like_a_dead_login(error: &str) -> bool {
+    let error = error.to_lowercase();
+    ["invalid_grant", "unauthorized", "401", "revoked", "expired"]
+        .iter()
+        .any(|marker| error.contains(marker))
+}
+
 /// Whether a key press should be treated as typed text in a modal input.
 ///
 /// A bare character is text; a character carrying Ctrl or Alt is a command.
@@ -1086,6 +1100,7 @@ impl App {
             Action::ConfigSwapPane => return self.config_swap_pane(),
             Action::ConfigActivate => return self.config_activate(),
             Action::ConfigAddAccount => return self.config_add_account_key(),
+            Action::ConfigForgetAccount => return self.config_forget_account_key(),
             Action::ConfigRefreshChecks => return self.config_refresh_checks(),
             Action::ChatReconnect => self.chat.reconnect_active(),
             Action::ChatNextChat => self.chat.cycle_chat(true),
@@ -1297,7 +1312,9 @@ impl App {
                     | Section::Notifications
                     | Section::Chat
             ),
-            Action::ConfigAddAccount => section == Section::Accounts,
+            Action::ConfigAddAccount | Action::ConfigForgetAccount => {
+                section == Section::Accounts
+            }
             Action::ConfigRefreshChecks => section == Section::Diagnostics,
             _ => false,
         }
@@ -1394,6 +1411,19 @@ impl App {
             .is_some_and(|config| config.section == Section::Accounts);
         if is_accounts {
             self.add_chat_account()
+        } else {
+            vec![]
+        }
+    }
+
+    fn config_forget_account_key(&mut self) -> Vec<Command> {
+        use super::config_tab::Section;
+        let is_accounts = self
+            .config_tab
+            .as_ref()
+            .is_some_and(|config| config.section == Section::Accounts);
+        if is_accounts {
+            self.forget_account()
         } else {
             vec![]
         }
@@ -1710,6 +1740,29 @@ impl App {
         self.save_appearance()
     }
 
+    /// Forget the extra chat account under the cursor.
+    ///
+    /// `TokenStore::remove` only deletes the bare platform slug, so an extra
+    /// account added by mistake could never be taken out and its refresh
+    /// token stayed valid in tokens.json indefinitely.
+    fn forget_account(&mut self) -> Vec<Command> {
+        let Some(config) = self.config_tab.as_ref() else {
+            return vec![];
+        };
+        let accounts = self.all_accounts();
+        let Some((key, platform, label)) = accounts.get(config.cursor).cloned() else {
+            return vec![];
+        };
+        if key == platform.slug() {
+            self.notify(
+                super::toast::Level::Info,
+                "That is the account you stream as — press enter to log out of it instead.",
+            );
+            return vec![];
+        }
+        vec![Command::ForgetAccount { key, label }]
+    }
+
     /// Authorise a second account for the selected platform.
     ///
     /// Kept apart from logging in because the two do different things: this
@@ -1719,9 +1772,29 @@ impl App {
         let Some(config) = self.config_tab.as_ref() else {
             return vec![];
         };
-        let Some(platform) = Platform::ALL.get(config.cursor).copied() else {
+        // The row is an account now, not a platform: the store can hold
+        // extra chat accounts and the section lists them all.
+        let accounts = self.all_accounts();
+        let Some(platform) = accounts
+            .get(config.cursor)
+            .map(|(_, platform, _)| *platform)
+            .or_else(|| Platform::ALL.get(config.cursor).copied())
+        else {
             return vec![];
         };
+        // Logging in and out is about the *primary* account; an extra chat
+        // account is removed with `d` instead, since re-authorising one is
+        // what `a` already does.
+        if accounts
+            .get(config.cursor)
+            .is_some_and(|(key, platform, _)| key != platform.slug())
+        {
+            self.notify(
+                super::toast::Level::Info,
+                "That is an extra chat account — press d to forget it, or a to add another.",
+            );
+            return vec![];
+        }
         if self.config.check_credentials(&[platform]).is_err() {
             self.notify(
                 super::toast::Level::Warning,
@@ -2537,6 +2610,38 @@ impl App {
         }
     }
 
+    /// Every account the token store holds, primary and extra, as
+    /// `(store key, platform, label)`.
+    ///
+    /// The Accounts section listed two rows — one per platform — while the
+    /// store can hold any number of extra chat accounts under
+    /// `twitch:<login>` keys. An account added by mistake was invisible and
+    /// could never be removed, so its refresh token stayed valid in
+    /// tokens.json indefinitely.
+    pub fn all_accounts(&self) -> Vec<(String, Platform, String)> {
+        let Ok(store) = crate::auth::store::TokenStore::load() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for platform in Platform::ALL {
+            for (key, tokens) in store.accounts(platform) {
+                let name = tokens
+                    .identity
+                    .as_ref()
+                    .map(|identity| identity.display_name.clone())
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| key.to_string());
+                let label = if key == platform.slug() {
+                    format!("{name} (streaming)")
+                } else {
+                    format!("{name} (chat only)")
+                };
+                out.push((key.to_string(), platform, label));
+            }
+        }
+        out
+    }
+
     /// Who each platform is logged in as, and how long the token has, for
     /// the Accounts section.
     ///
@@ -2546,17 +2651,10 @@ impl App {
     /// the store holds the account name, the expiry and whether it can renew
     /// itself — and with two accounts on one machine the only question at
     /// this screen is which one you are about to stream as.
-    pub fn account_summary(&self, platform: Platform) -> Option<(String, String, bool)> {
+    pub fn account_summary_for(&self, key: &str) -> Option<(String, bool)> {
         let store = crate::auth::store::TokenStore::load().ok()?;
-        let tokens = store.get(platform)?;
-        let name = tokens
-            .identity
-            .as_ref()
-            .map(|identity| identity.display_name.clone())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| "an unnamed account".to_string());
+        let tokens = store.get_keyed(key)?;
         Some((
-            name,
             tokens.expires_in_human(),
             tokens.refresh_token.is_some(),
         ))
@@ -2673,10 +2771,23 @@ impl App {
                             LogLevel::Success,
                             format!("{} connected as {name}.", platform.label()),
                         ),
-                        Err(err) => self.push_log(
-                            LogLevel::Error,
-                            format!("{} could not connect: {err}", platform.label()),
-                        ),
+                        Err(err) => {
+                            self.push_log(
+                                LogLevel::Error,
+                                format!("{} could not connect: {err}", platform.label()),
+                            );
+                            // A login the platform has stopped accepting is
+                            // not a login. `logged_in` was a start-up
+                            // snapshot that nothing ever corrected, so a
+                            // revoked token — the commonest way this breaks
+                            // after weeks of working — left Accounts, the
+                            // login screen and the header all still saying
+                            // "logged in" while nothing worked.
+                            if looks_like_a_dead_login(err) {
+                                self.logged_in.insert(platform, false);
+                                self.refresh_diagnostics_if_showing();
+                            }
+                        }
                     }
                     self.accounts.insert(platform, outcome);
                 }
@@ -6914,6 +7025,34 @@ mod tests {
         config.preset.title = "the default".into();
         config.active_profile = "typo".into();
         assert_eq!(config.active_preset().title, "the default");
+    }
+
+    /// `logged_in` was a start-up snapshot nothing corrected, so a revoked
+    /// token — the commonest way this breaks after weeks of working — left
+    /// the whole interface still saying "logged in" while nothing worked.
+    #[test]
+    fn a_refused_login_stops_the_screen_claiming_you_are_logged_in() {
+        let mut app = app();
+        app.logged_in.insert(Platform::Twitch, true);
+
+        app.handle_event(Event::Connected(vec![(
+            Platform::Twitch,
+            Err("the refresh token was revoked (invalid_grant)".into()),
+        )]));
+        assert!(!app.logged_in[&Platform::Twitch]);
+
+        // …but a network hiccup must not. Telling somebody they are logged
+        // out mid-stream because a packet went missing is worse than the
+        // original problem.
+        app.logged_in.insert(Platform::Twitch, true);
+        app.handle_event(Event::Connected(vec![(
+            Platform::Twitch,
+            Err("the request timed out".into()),
+        )]));
+        assert!(
+            app.logged_in[&Platform::Twitch],
+            "a transient failure is not a dead login"
+        );
     }
 
     /// Streamer mode follows OBS by default, and can be forced either way for

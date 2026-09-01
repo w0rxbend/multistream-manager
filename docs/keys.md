@@ -208,6 +208,7 @@ letter goes to that and find keeps `f`.
 | `config.swap_pane` | Swap between the section list and its contents |
 | `config.activate` | Change the selected setting, or run the job |
 | `config.add_account` | Add another chat account |
+| `config.forget_account` | Forget an extra chat account |
 | `config.refresh_checks` | Run the self-check again |
 | <kbd>c</kbd> <kbd>r</kbd> | `chat.reconnect` | Reconnect chat |
 | <kbd>c</kbd> <kbd>s</kbd> | `chat.search` | Search chat |

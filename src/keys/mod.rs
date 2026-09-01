@@ -410,6 +410,7 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Config, "l",              Action::ConfigSwapPane),
     (Context::Config, "<Enter>",        Action::ConfigActivate),
     (Context::Config, "a",              Action::ConfigAddAccount),
+    (Context::Config, "d",              Action::ConfigForgetAccount),
     (Context::Config, "r",              Action::ConfigRefreshChecks),
     // `q` quits from every other tab and every Config footer promised it did
     // here too; it was swallowed by the layout editor's catch-all instead.

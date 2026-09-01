@@ -219,6 +219,16 @@ impl TokenStore {
     }
 
     /// Forget one platform's tokens. Used by `msm logout`.
+    /// Forget one account by its store key.
+    ///
+    /// `remove` above only deletes the bare platform slug, so an extra chat
+    /// account added by mistake — keyed `twitch:<login>` — could never be
+    /// taken out, and its refresh token stayed valid in tokens.json
+    /// indefinitely.
+    pub fn remove_keyed(&mut self, key: &str) -> bool {
+        self.tokens.remove(key).is_some()
+    }
+
     pub fn remove(&mut self, platform: Platform) -> bool {
         self.tokens.remove(platform.slug()).is_some()
     }
