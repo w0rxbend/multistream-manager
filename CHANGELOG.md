@@ -80,6 +80,20 @@ would break an existing setup is listed under **Changed** with what to do.
   per kind of stream, instead of retyping the title, tags and both categories
   every time you switch. `[preset]` stays the unnamed default, so existing
   configs are untouched.
+- **Twitch tells the program when the stream starts and stops**
+  (`stream.online` / `stream.offline`). Going live was learned only from a
+  fifteen-second poll, and it is the state change that gates notifications,
+  uptime and the health strip. Neither subscription needs a scope.
+- **YouTube broadcasts are created with low latency** rather than the default
+  30-60 seconds glass-to-glass, which made answering chat a reply to something
+  a minute old.
+- **Save the OBS replay buffer** (`<Leader>ob`) — the most-pressed OBS hotkey
+  a live streamer has, and it was on no key here.
+- **Filter the Keys listing and the theme picker** by typing. 110 bindings and
+  58 themes were each walked one `j` at a time, with the letters dropped.
+- **Open the files in Config → Files** with <kbd>Enter</kbd>.
+- **Undo, row resizing and a cursor in the layout editor** — `u`, `>`/`<`, and
+  the selected panel outlined in the preview.
 - **`[keys.config]`**: the Config tab's keys are named, rebindable actions
   instead of hardcoded matches, so they appear in which-key, `<Leader>?` and
   the palette like every other tab's.
@@ -154,6 +168,43 @@ would break an existing setup is listed under **Changed** with what to do.
   back in forms the parser rejects.
 - **Broadcast listing and deletion spent YouTube quota nothing counted** — 50
   units per delete. The listing now says what confirming will cost.
+- **Extra chat accounts were invisible and could never be removed**, so one
+  added by mistake kept a valid refresh token on disk forever.
+- **A revoked token left the whole interface saying "logged in"** — the flag
+  was a start-up snapshot nothing corrected.
+- **The wheel scrolled the focused pane, not the one under the pointer**,
+  silently dropping a reply armed in the other one.
+- **Volume showed `80%` while OBS showed `-2.0 dB`**; the dB figure was
+  fetched, stored and read by nothing. Same for the path of a finished
+  recording.
+- **The cleanup listing stopped at 500 broadcasts silently**, so the job
+  looked finished when it was not.
+- **The paid-event export blocked every other command** while it read the
+  chat logs.
+- **`ListStreams` was the only job that needed a live connection**, so the one
+  most needed during first-run setup was the only one that refused then.
+- **Tags were silently rewritten** — cut at 25 characters, or stripped to
+  nothing — with only the count validated.
+- **`~` in the thumbnail path was taken literally**, failing at submit time
+  with "there is no file at ~/pics/thumb.png".
+- **A flapping connection buried the message history** under identical retry
+  lines, which a bounded history then evicted the real error from.
+- **Search left you to find the match yourself**, pinned it to the bottom row
+  and gave no count; and nothing divided what you had read from what arrived
+  while you were away.
+- **The activity view looked back two minutes** on a busy chat, for the pane
+  that is the "who paid me tonight" list.
+- **A click did not skip the splash**, though it says "press any key".
+- **Diagnostics graded an expired login green** — `[ ok ] token valid for
+  expired`.
+- **Unbinding a chord not bound in that context did nothing, silently**, and a
+  mistyped action name got no suggestion; a prefix binding could bury a whole
+  group with no warning.
+- **Backspace threw away a whole part-typed chord** instead of stepping back
+  one key, and Esc on the Config tab jumped to another tab instead of stepping
+  back to the section list.
+- **The OBS status poll ran three requests a second forever**, including
+  overnight on an idle machine.
 
 ### Changed
 
