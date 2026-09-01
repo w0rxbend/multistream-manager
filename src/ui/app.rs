@@ -1184,6 +1184,15 @@ impl App {
             Action::ObsMuteAll => self.mute_all_obs_audio(),
             Action::ObsVolumeUp => self.nudge_obs_volume(VOLUME_STEP),
             Action::ObsVolumeDown => self.nudge_obs_volume(-VOLUME_STEP),
+            Action::ObsSaveReplay => {
+                // "That just happened, keep it" — the most-pressed OBS hotkey
+                // a live streamer has, and it was on no key here at all.
+                self.obs_command(crate::obs::task::Command::SaveReplay);
+                self.notify(
+                    super::toast::Level::Info,
+                    "Asked OBS to save the replay buffer.",
+                );
+            }
             Action::ObsVolumeUpFine => self.nudge_obs_volume(VOLUME_STEP_FINE),
             Action::ObsVolumeDownFine => self.nudge_obs_volume(-VOLUME_STEP_FINE),
             Action::ObsToggleStream => self.obs_command(ObsCommand::ToggleStream),

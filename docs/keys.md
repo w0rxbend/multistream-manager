@@ -223,6 +223,7 @@ letter goes to that and find keeps `f`.
 |---|---|---|
 | <kbd>o</kbd> <kbd>s</kbd> | `obs.stream` | Start or stop streaming |
 | <kbd>o</kbd> <kbd>r</kbd> | `obs.record` | Start or stop recording |
+| <kbd>o</kbd> <kbd>b</kbd> | `obs.save_replay` | Save the replay buffer — "that just happened, keep it". OBS refuses if the buffer is not running, which has to be turned on in OBS's own settings |
 | <kbd>o</kbd> <kbd>p</kbd> | `obs.pause_recording` | Pause or resume a recording |
 | <kbd>o</kbd> <kbd>m</kbd> | `obs.mute` | Toggle mute on the selected input |
 | <kbd>o</kbd> <kbd>M</kbd> | `obs.mute_all` | Mute everything — the panic key |
@@ -737,6 +738,7 @@ dot is the group the action appears under in the which-key popup.
 | `obs.mute` | Toggle mute |
 | `obs.mute_all` | Mute everything |
 | `obs.volume_up` | Volume up |
+| `obs.save_replay` | Save the replay buffer |
 | `obs.volume_up_fine` | Volume up a little |
 | `obs.volume_down_fine` | Volume down a little |
 | `obs.volume_down` | Volume down |

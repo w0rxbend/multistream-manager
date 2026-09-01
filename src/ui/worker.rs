@@ -467,7 +467,18 @@ pub async fn run(
                         engine = None;
                         Event::Log {
                             level: LogLevel::Success,
-                            message: format!("Logged out of {}.", platform.label()),
+                            // Say what was and was not done. This deletes the
+                            // token here; it does not revoke it at the
+                            // provider, and somebody logging out *because* a
+                            // token leaked needs to know the difference — a
+                            // refresh token stays valid for months.
+                            message: format!(
+                                "Logged out of {}. The token is deleted from this machine; to \
+                                 revoke it at {} as well, remove this application from your \
+                                 account's connections page.",
+                                platform.label(),
+                                platform.label()
+                            ),
                         }
                     }
                     Err(err) => Event::Log {

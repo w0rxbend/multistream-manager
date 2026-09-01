@@ -48,6 +48,15 @@ const RECONNECT_MAX: Duration = Duration::from_secs(30);
 /// own status bar does, and the request is cheap and local.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
+/// …and how often when nothing is happening.
+///
+/// The figures the poll fetches — bitrate, dropped frames, durations — only
+/// change while something is being output. Asking three times a second for
+/// numbers that are all zero, forever, is work for nothing on both sides of
+/// the socket; a machine left running the interface overnight paid it all
+/// night. Streaming or recording puts it straight back to once a second.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
 /// What the interface can ask of OBS.
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -74,6 +83,8 @@ pub enum Command {
     /// anything that means "make sure it is on" — the pre-flight go-live, for
     /// one — where a toggle would stop a stream that was already running.
     SetStreaming(bool),
+    /// Write out whatever the replay buffer is holding.
+    SaveReplay,
     /// Give up on the current connection and start again immediately, rather
     /// than waiting out the backoff.
     Reconnect,
@@ -406,9 +417,23 @@ async fn session(
             }
 
             _ = poll.tick() => {
+                // Match the cadence to whether anything is actually moving.
+                // `StreamStateChanged` and `RecordStateChanged` arrive as
+                // events, so the state here is current without polling for
+                // it — which is what makes the slower tick safe.
+                let wanted = if state.streaming || state.recording {
+                    POLL_INTERVAL
+                } else {
+                    IDLE_POLL_INTERVAL
+                };
+                if poll.period() != wanted {
+                    poll = tokio::time::interval(wanted);
+                    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                }
+
                 // The figures no event announces. A failure here is not worth
-                // reporting — the next tick tries again a second later — but
-                // a dead transport still has to end the session.
+                // reporting — the next tick tries again — but a dead
+                // transport still has to end the session.
                 if let Err(err) = poll_status(&mut sink, &mut source, &mut pending, &mut state).await {
                     if is_transport_failure(&err) {
                         return Ok(Outcome::Disconnected);
@@ -955,6 +980,9 @@ async fn run_command(
             };
             ask(sink, source, pending, state, request).await?;
             poll_status(sink, source, pending, state).await?;
+        }
+        Command::SaveReplay => {
+            ask(sink, source, pending, state, requests::save_replay_buffer()).await?;
         }
         Command::ToggleRecordPause => {
             ask(

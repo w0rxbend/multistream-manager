@@ -496,6 +496,7 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Obs, "m",            Action::ObsToggleMute),
     (Context::Obs, "M",            Action::ObsMuteAll),
     (Context::Obs, "+",            Action::ObsVolumeUp),
+    (Context::Global, "<Leader>ob", Action::ObsSaveReplay),
     (Context::Obs, "]",            Action::ObsVolumeUpFine),
     (Context::Obs, "[",            Action::ObsVolumeDownFine),
     (Context::Obs, "=",            Action::ObsVolumeUp),

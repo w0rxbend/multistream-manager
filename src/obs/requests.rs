@@ -158,6 +158,20 @@ pub fn stop_stream() -> Request {
 }
 
 
+/// Save whatever the replay buffer is holding.
+///
+/// The replay buffer keeps the last N seconds in memory; saving it writes
+/// that to a file. It is the single most-pressed OBS hotkey a live streamer
+/// has — "that just happened, keep it" — and none of the five replay requests
+/// appeared here at all.
+///
+/// OBS refuses when the buffer is not running, which is the right outcome:
+/// the buffer has to be started in OBS's own settings, and pretending
+/// otherwise would produce a key that silently does nothing.
+pub fn save_replay_buffer() -> Request {
+    request("SaveReplayBuffer")
+}
+
 /// Pause or resume an in-progress recording.
 pub fn toggle_record_pause() -> Request {
     request("ToggleRecordPause")
@@ -206,6 +220,7 @@ mod tests {
     /// was asked to begin.
     #[test]
     fn starting_and_stopping_are_distinct_from_toggling() {
+        assert_eq!(save_replay_buffer().request_type, "SaveReplayBuffer");
         assert_eq!(start_stream().request_type, "StartStream");
         assert_eq!(stop_stream().request_type, "StopStream");
         assert_eq!(toggle_stream().request_type, "ToggleStream");

@@ -394,6 +394,28 @@ impl KeysConfig {
             ));
         }
 
+        // A `[keys.config]` binding to something the Config tab does not
+        // handle. It parses, stores and is then silently ignored: that tab
+        // owns its plain keys and resolves only its own actions, so anything
+        // else reaches nothing at all. Better to say so than to leave
+        // somebody wondering why their binding does nothing there.
+        for (written, action_name) in &self.config {
+            if action_name.trim().is_empty() {
+                continue;
+            }
+            let Some(action) = Action::parse(action_name) else {
+                continue;
+            };
+            let handled = action.name().starts_with("config.") || action == Action::Quit;
+            if !handled {
+                problems.push(format!(
+                    "[keys.config] {written:?} is bound to {action_name:?}, which the Config \
+                     tab does not handle — that tab only runs its own config.* actions and \
+                     app.quit"
+                ));
+            }
+        }
+
         // A binding that buries a whole group under it. This one is worse
         // than a shadow: the keys do not do something else, they stop
         // existing, and `shadowed` above cannot see it because it only
@@ -2001,6 +2023,34 @@ mod tests {
         assert!(
             problems.iter().any(|problem| problem.contains("unreachable")),
             "expected a complaint, got {problems:?}"
+        );
+    }
+
+    /// A `[keys.config]` binding to something that tab does not handle
+    /// parses, stores and is silently ignored — that tab owns its plain keys
+    /// and resolves only its own actions.
+    #[test]
+    fn a_config_binding_to_an_unhandled_action_is_reported() {
+        let mut keys = KeysConfig::default();
+        keys.config.insert("z".into(), "obs.stream".into());
+        let (_, problems) = keys.keymap();
+
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("does not handle")),
+            "expected a complaint, got {problems:?}"
+        );
+
+        // …and its own actions are fine.
+        let mut fine = KeysConfig::default();
+        fine.config.insert("z".into(), "config.activate".into());
+        let (_, problems) = fine.keymap();
+        assert!(
+            !problems
+                .iter()
+                .any(|problem| problem.contains("does not handle")),
+            "a config.* action is handled: {problems:?}"
         );
     }
 
