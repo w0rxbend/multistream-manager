@@ -918,7 +918,13 @@ impl ChatTabState {
         // Composer commands that never reach the platform (twi's /channels,
         // yc's /chats): bare opens the join prompt, with an argument joins
         // directly.
-        if text == "/clip" {
+        // `command_argument` rather than `==`: every other command here is
+        // matched case-insensitively, and this one was not — so `/CLIP` was
+        // lowercased by `classify_command`, recognised as handled here, and
+        // then missed by this exact comparison. It fell all the way through
+        // to the send path and was posted to everybody watching, which is the
+        // single thing the slash guard exists to prevent.
+        if command_argument(&text, "/clip").is_some_and(|rest| rest.trim().is_empty()) {
             chat.state.draft.clear();
             self.mode = ChatFocus::Normal;
             if let Some(chat) = self.active_chat_mut() {
@@ -943,10 +949,14 @@ impl ChatTabState {
         }
         // The command must be the whole word: "/chatstats" is a message, not
         // a request to join the channel "tats".
+        // `command_argument`, not `strip_prefix`: the latter is
+        // case-sensitive, so `/CHATS` fell past this the same way `/CLIP` fell
+        // past the clip check above — into a public message. It also already
+        // enforces the whole-word rule, so "/chatstats" stays a message
+        // rather than a request to join the channel "tats".
         let command_rest = ["/chats", "/channels", "/channel"]
             .iter()
-            .find_map(|command| text.strip_prefix(command))
-            .filter(|rest| rest.is_empty() || rest.starts_with(' '));
+            .find_map(|command| command_argument(&text, command));
         if let Some(rest) = command_rest {
             let target = rest.trim().to_string();
             chat.state.draft.clear();
@@ -2265,6 +2275,59 @@ mod tests {
     /// The event this whole feature exists for. A raid gives you seconds to
     /// greet a few hundred people, and by default the pop-up fires whether or
     /// not the chat pane happens to be on screen — because during a stream it
+    /// The slash guard exists to stop a command reaching public chat, and
+    /// capitalisation defeated it. `classify_command` lowercases the word
+    /// before deciding, so `/CLIP` was recognised as handled here — and then
+    /// the dispatch below compared it with `==` against the original text,
+    /// missed, and fell all the way through to the send path.
+    #[tokio::test]
+    async fn a_capitalised_command_is_never_posted_as_a_message() {
+        for typed in ["/CLIP", "/Clip", "/CHATS", "/MARKER note", "/RAID someone"] {
+            let mut state = tab_state(1, 0);
+            let key = with_open_chat(&mut state, Notifier::new(false));
+            let (tx, mut rx) = mpsc::channel(4);
+            state.open.get_mut(&key).unwrap().handle.commands = tx;
+            state.open.get_mut(&key).unwrap().state.draft.set(typed);
+
+            state.compose_send();
+
+            // Anything but a plain Send is fine: the point is only that the
+            // text never goes out as a public message.
+            if let Ok(ChatCommand::Send { text, .. }) = rx.try_recv() {
+                panic!("{typed:?} was posted to chat as {text:?}");
+            }
+        }
+    }
+
+    /// …while a message that merely starts with those letters is still a
+    /// message. "/clipboard" is not a clip.
+    #[tokio::test]
+    async fn a_longer_word_starting_with_a_command_is_still_a_message() {
+        let mut state = tab_state(1, 0);
+        let key = with_open_chat(&mut state, Notifier::new(false));
+        state
+            .open
+            .get_mut(&key)
+            .unwrap()
+            .state
+            .draft
+            .set("/clipboard");
+
+        state.compose_send();
+
+        // Refused by the slash guard rather than sent — which is the correct
+        // outcome for an unknown command, and not the same as being posted.
+        let refused = state.open[&key]
+            .state
+            .messages
+            .iter()
+            .any(|msg| msg.text.contains("not a command here"));
+        assert!(
+            refused,
+            "an unknown slash command must be refused, not sent"
+        );
+    }
+
     /// A marker is a bookmark in the VOD, and the whole point is that it
     /// takes one key at the moment you have no hands free.
     #[tokio::test]
