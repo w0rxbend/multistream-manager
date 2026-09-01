@@ -2136,11 +2136,21 @@ impl App {
                         self.obs.clear_live_data();
                         self.obs.connection = connection;
                     }
-                    Connection::Reconnecting | Connection::Idle | Connection::Connecting => {
+                    Connection::Reconnecting { reason } => {
+                        if previously_connected {
+                            // Say why, when the attempt had something to say.
+                            match reason {
+                                Some(reason) => self
+                                    .push_log(LogLevel::Warning, format!("OBS: {reason}")),
+                                None => self.push_log(LogLevel::Warning, "OBS disconnected."),
+                            }
+                            self.obs.clear_live_data();
+                        }
+                    }
+                    Connection::Idle | Connection::Connecting => {
                         if previously_connected {
                             self.push_log(LogLevel::Warning, "OBS disconnected.");
                             self.obs.clear_live_data();
-                            self.obs.connection = connection;
                         }
                     }
                 }

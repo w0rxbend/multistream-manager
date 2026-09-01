@@ -156,6 +156,13 @@ async fn run(
     updates: mpsc::UnboundedSender<Update>,
 ) {
     let mut delay = RECONNECT_INITIAL;
+    // Why the last attempt failed, carried into the reconnecting state so it
+    // reaches the screen.
+    let mut reason: Option<String> = None;
+    // Consecutive attempts that look like a wrong password. Retrying one of
+    // those forever is not resilience: nothing about the next attempt will be
+    // different, and the loop hides the one thing the user has to act on.
+    let mut auth_failures: u32 = 0;
 
     loop {
         let _ = updates.send(Update::Connection(Connection::Connecting));
@@ -168,6 +175,7 @@ async fn run(
             }
             Ok(Outcome::Disconnected) => {
                 tracing::info!("OBS disconnected; will retry");
+                auth_failures = 0;
                 // A connection that worked once will very likely work again
                 // as soon as OBS is back, so the backoff starts over rather
                 // than continuing from wherever the last outage left it.
@@ -175,11 +183,46 @@ async fn run(
             }
             Err(err) => {
                 tracing::debug!(error = %format!("{err:#}"), "OBS connection failed");
-                let _ = updates.send(Update::Connection(Connection::Failed(format!("{err:#}"))));
+                // The reason travels *with* the reconnecting state rather
+                // than as a separate `Failed` a line earlier. It used to be
+                // sent and then overwritten in the same iteration, so it
+                // existed only between two channel sends and nothing ever
+                // showed it.
+                let text = format!("{err:#}");
+                if text.contains("password is probably wrong") {
+                    auth_failures += 1;
+                } else {
+                    auth_failures = 0;
+                }
+                reason = Some(text);
             }
         }
 
-        let _ = updates.send(Update::Connection(Connection::Reconnecting));
+        // A wrong password does not come right by waiting. After a few
+        // identical refusals, stop and say what to do — `obs.reconnect` is
+        // the way back in, and it is already a binding.
+        if auth_failures >= AUTH_FAILURES_BEFORE_GIVING_UP {
+            let _ = updates.send(Update::Connection(Connection::Failed(format!(
+                "{} — fix [obs] password in config.toml, then press R on the OBS tab",
+                reason
+                    .take()
+                    .unwrap_or_else(|| "OBS refused the connection".to_string())
+            ))));
+            // Park until asked. A shutdown must still end the task.
+            match commands.recv().await {
+                None => return,
+                Some(Command::Reconnect) => {
+                    auth_failures = 0;
+                    delay = RECONNECT_INITIAL;
+                    continue;
+                }
+                Some(_) => continue,
+            }
+        }
+
+        let _ = updates.send(Update::Connection(Connection::Reconnecting {
+            reason: reason.take(),
+        }));
 
         // Wait, but stay responsive: an explicit reconnect must not have to
         // sit through the backoff, and a shutdown must not either.
@@ -206,6 +249,13 @@ async fn run(
 }
 
 /// Why a session ended.
+/// How many consecutive authentication refusals before the task stops trying.
+///
+/// Three rather than one, because a genuine network failure at exactly the
+/// wrong moment looks identical to a refused password from here — the error
+/// text says so itself.
+const AUTH_FAILURES_BEFORE_GIVING_UP: u32 = 3;
+
 enum Outcome {
     /// The interface is shutting down.
     Closed,
@@ -1415,13 +1465,19 @@ mod tests {
         let (tx, mut updates) = mpsc::unbounded_channel();
         let handle = spawn(params(url, Some("wrong")), tx);
 
+        // The reason travels with the reconnecting state; it used to be sent
+        // as a separate `Failed` and overwritten in the same iteration, so it
+        // never reached the screen at all.
         let mut reported = None;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while tokio::time::Instant::now() < deadline {
-            match tokio::time::timeout(Duration::from_secs(2), updates.recv()).await {
-                Ok(Some(Update::Connection(Connection::Failed(reason)))) => {
-                    reported = Some(reason);
-                    break;
+        let mut gave_up = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        while tokio::time::Instant::now() < deadline && !gave_up {
+            match tokio::time::timeout(Duration::from_secs(3), updates.recv()).await {
+                Ok(Some(Update::Connection(connection))) => {
+                    if let Some(reason) = connection.detail() {
+                        reported = Some(reason.to_string());
+                    }
+                    gave_up = matches!(connection, Connection::Failed(_));
                 }
                 Ok(Some(_)) => continue,
                 _ => break,
@@ -1430,6 +1486,10 @@ mod tests {
 
         let reported = reported.expect("a failure is reported");
         assert!(reported.contains("password"), "got {reported}");
+        assert!(
+            gave_up,
+            "a wrong password does not come right by waiting, so the task has to stop trying"
+        );
 
         drop(handle.commands);
         server.abort();
@@ -1525,16 +1585,25 @@ mod tests {
         let (tx, mut updates) = mpsc::unbounded_channel();
         let handle = spawn(params("ws://127.0.0.1:1".to_string(), None), tx);
 
-        let mut failures = 0;
+        // No OBS at all is not a wrong password: it keeps retrying, and each
+        // attempt says why it failed rather than only that it did.
+        let mut reported = None;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while tokio::time::Instant::now() < deadline && failures < 1 {
-            if let Ok(Some(Update::Connection(Connection::Failed(_)))) =
+        while tokio::time::Instant::now() < deadline && reported.is_none() {
+            if let Ok(Some(Update::Connection(connection))) =
                 tokio::time::timeout(Duration::from_secs(3), updates.recv()).await
             {
-                failures += 1;
+                assert!(
+                    !matches!(connection, Connection::Failed(_)),
+                    "an absent OBS must keep retrying rather than give up"
+                );
+                reported = connection.detail().map(str::to_string);
             }
         }
-        assert!(failures >= 1, "a failure to connect should be reported");
+        assert!(
+            reported.is_some(),
+            "a failure to connect should be reported with its reason"
+        );
 
         drop(handle.commands);
     }

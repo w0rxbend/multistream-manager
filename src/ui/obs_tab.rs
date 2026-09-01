@@ -49,7 +49,7 @@ pub fn draw_status_lines(frame: &mut Frame, area: Rect, obs: &ObsState) {
 
     let (indicator, colour) = match &obs.connection {
         Connection::Connected => ("●", sk.success),
-        Connection::Connecting | Connection::Reconnecting => ("◐", sk.warning),
+        Connection::Connecting | Connection::Reconnecting { .. } => ("◐", sk.warning),
         Connection::Failed(_) => ("✖", sk.error),
         Connection::Idle => ("○", sk.muted),
     };
@@ -67,11 +67,15 @@ pub fn draw_status_lines(frame: &mut Frame, area: Rect, obs: &ObsState) {
             Style::new().fg(sk.muted),
         ));
     }
-    if let Connection::Failed(reason) = &obs.connection {
-        first.push(Span::styled(
-            format!("  ·  {reason}"),
-            Style::new().fg(sk.error),
-        ));
+    // Whatever the connection has to say — a refused password reaches the
+    // screen here whether the task has given up on it or is still retrying.
+    if let Some(reason) = obs.connection.detail() {
+        let colour = if matches!(obs.connection, Connection::Failed(_)) {
+            sk.error
+        } else {
+            sk.warning
+        };
+        first.push(Span::styled(format!("  ·  {reason}"), Style::new().fg(colour)));
     }
 
     // The live indicators. Streaming and recording are separate on purpose:
@@ -489,6 +493,13 @@ fn empty_note(obs: &ObsState, enabled: bool, when_connected: &str) -> Paragraph<
         }
         Connection::Connected => when_connected.to_string(),
         Connection::Failed(reason) => format!("Not connected: {reason}"),
+        // A retry that knows why the last one failed says so, rather than
+        // leaving somebody to guess between "OBS is not running" and "the
+        // password is wrong".
+        other if other.detail().is_some() => format!(
+            "Waiting for OBS…\n\n{}",
+            other.detail().unwrap_or_default()
+        ),
         _ => "Waiting for OBS…\n\nTurn its WebSocket server on under\nTools → WebSocket Server Settings."
             .to_string(),
     };

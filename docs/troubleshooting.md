@@ -617,12 +617,20 @@ A variable set in your shell profile will not be visible to a `msm` started
 from a desktop launcher, which is a common way for this to work in one terminal
 and not another.
 
+After three refusals in a row the connection task stops trying and says so:
+waiting does not make a wrong password right, and a loop that retried forever
+buried the one thing you had to act on. Fix `password` under `[obs]` and press
+<kbd>R</kbd> on the OBS tab. An OBS that is simply not running is a different
+case and is retried indefinitely, as before.
+
 **"OBS control is turned off"** — `enabled = false` under `[obs]`.
 
 **It connects and then drops repeatedly** — OBS restarting, or a firewall
 between two machines. The interface reconnects on its own with a backoff that
 stops growing at thirty seconds; <kbd>R</kbd> on the OBS tab retries
-immediately rather than waiting it out.
+immediately rather than waiting it out. Each attempt shows why the last one
+failed beside the status, so you are not left guessing between "OBS is not
+running" and "the password is wrong".
 
 ### A scene or input cannot be found
 

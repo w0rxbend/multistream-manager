@@ -115,7 +115,14 @@ pub enum Connection {
     Connecting,
     Connected,
     /// The connection dropped and another attempt is coming.
-    Reconnecting,
+    ///
+    /// Carries why, when there is a reason worth carrying. The reason used to
+    /// go out as a `Failed` a line earlier and be overwritten by this state
+    /// in the same loop iteration, so it existed only between two channel
+    /// sends and nothing ever displayed it — the pane said "reconnecting" and
+    /// the user was left to guess whether the password was wrong or OBS was
+    /// simply not running.
+    Reconnecting { reason: Option<String> },
     /// Something went wrong that retrying will not fix — a wrong password,
     /// most often. The reason is kept so it can be shown rather than logged
     /// and forgotten.
@@ -123,12 +130,21 @@ pub enum Connection {
 }
 
 impl Connection {
+    /// The explanation to show beside the label, if there is one.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Connection::Failed(reason) => Some(reason),
+            Connection::Reconnecting { reason } => reason.as_deref(),
+            _ => None,
+        }
+    }
+
     pub fn label(&self) -> &str {
         match self {
             Connection::Idle => "not connected",
             Connection::Connecting => "connecting",
             Connection::Connected => "connected",
-            Connection::Reconnecting => "reconnecting",
+            Connection::Reconnecting { .. } => "reconnecting",
             Connection::Failed(_) => "failed",
         }
     }
