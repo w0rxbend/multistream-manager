@@ -434,9 +434,10 @@ your channel. Remove that setting to let the application pick one automatically.
 mistyped, or it belongs to a different channel than the one you are logged in
 as.
 
-**Fix.** Run **Config → Housekeeping → *List YouTube stream keys***, copy an id
-that is actually listed, and put that in the config — or clear `stream_id = ""` entirely, which is the right answer when
-the channel only has one key.
+**Fix.** Run **Config → Housekeeping → *List YouTube stream keys***, then press
+<kbd>Enter</kbd> on one of the rows it adds to pin that id. <kbd>Enter</kbd> on
+the pinned row unpins it, which is the right answer when the channel only has
+one key.
 
 This is deliberately a hard failure rather than a quiet fallback. Binding some
 other stream would produce a broadcast that your encoder is not sending to,

@@ -132,9 +132,13 @@ that gets bound, and there is nothing to disambiguate.
 
 If the channel has several, whichever one YouTube happens to list first is the
 one that gets used, and that ordering is not something you control. Pin the one
-your OBS setup is actually configured for. To see the ids, open
-**Config → Housekeeping** and run *List YouTube stream keys*; the results appear
-in the activity log:
+your OBS setup is actually configured for. Open **Config → Housekeeping** and
+run *List YouTube stream keys*: each one it finds becomes a row under the three
+jobs, and <kbd>Enter</kbd> on a row pins it — <kbd>Enter</kbd> again unpins it,
+which is how you get back to letting YouTube choose. The pinned one is marked
+with a dot. There is no need to edit this file by hand for it.
+
+The ids also go to the activity log:
 
 ```
 ID                         PINNED  TITLE

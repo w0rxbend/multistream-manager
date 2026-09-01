@@ -90,6 +90,12 @@ pub enum Command {
 pub enum Event {
     /// Connection finished; carries the account name resolved for each platform.
     Connected(Vec<(Platform, Result<String, String>)>),
+    /// The reusable YouTube stream ids on the channel, as `(id, title)`.
+    ///
+    /// Deliberately not the endpoints themselves: an `IngestEndpoint` carries
+    /// the stream *key*, and this window is often part of the broadcast. The
+    /// key never leaves the worker.
+    Streams(Vec<(String, String)>),
     /// Autocomplete results for the keystroke identified by `generation`.
     Categories {
         platform: Platform,
@@ -557,15 +563,20 @@ pub async fn run(
                         });
                     }
                     Ok(endpoints) => {
-                        for endpoint in endpoints {
-                            // The id, never the key: this window is often part
-                            // of the broadcast, and the id is the only half
-                            // needed for `[youtube] stream_id`.
+                        // The id and the title, never the key: this window is
+                        // often part of the broadcast, and the id is the only
+                        // half `[youtube] stream_id` needs.
+                        let listed: Vec<(String, String)> = endpoints
+                            .into_iter()
+                            .map(|endpoint| (endpoint.id, endpoint.title))
+                            .collect();
+                        for (id, title) in &listed {
                             let _ = events.send(Event::Log {
                                 level: LogLevel::Info,
-                                message: format!("  {} — {}", endpoint.id, endpoint.title),
+                                message: format!("  {id} — {title}"),
                             });
                         }
+                        let _ = events.send(Event::Streams(listed));
                     }
                     Err(err) => {
                         let _ = events.send(Event::Log {

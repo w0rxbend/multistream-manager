@@ -223,7 +223,9 @@ impl ConfigTab {
             Section::Keys => app.keymap.all().len(),
             Section::Obs => 0,
             Section::Accounts => crate::model::Platform::ALL.len(),
-            Section::Maintenance => MAINTENANCE_ROWS,
+            // The three jobs, plus a row per stream id the last listing
+            // found, so one can be pinned without a text editor.
+            Section::Maintenance => MAINTENANCE_ROWS + app.youtube_streams.len(),
             Section::Diagnostics => 0,
             Section::Paths => 0,
         }
@@ -448,7 +450,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Section::Keys => draw_keys(frame, inner, app, config),
         Section::Obs => draw_obs(frame, inner, app),
         Section::Accounts => draw_accounts(frame, inner, app, config),
-        Section::Maintenance => draw_maintenance(frame, inner, config),
+        Section::Maintenance => draw_maintenance(frame, inner, app, config),
         Section::Diagnostics => draw_diagnostics(frame, inner, app),
         Section::Paths => draw_paths(frame, inner),
     }
@@ -899,7 +901,7 @@ fn draw_accounts(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_maintenance(frame: &mut Frame, area: Rect, config: &ConfigTab) {
+fn draw_maintenance(frame: &mut Frame, area: Rect, app: &App, config: &ConfigTab) {
     let sk = theme::skin();
     let mut lines = Vec::new();
     for (index, (name, explanation)) in MAINTENANCE_JOBS.iter().enumerate() {
@@ -922,6 +924,39 @@ fn draw_maintenance(frame: &mut Frame, area: Rect, config: &ConfigTab) {
             )));
         }
     }
+    // The stream ids the last listing found, as rows rather than as log
+    // lines somebody has to copy out by eye. Pinning one used to mean leaving
+    // the program and hand-editing config.toml.
+    if !app.youtube_streams.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Reusable YouTube streams — enter pins one as [youtube] stream_id",
+            Style::new().fg(sk.muted),
+        )));
+        let pinned = app.config.youtube.stream_id.trim();
+        for (offset, (id, title)) in app.youtube_streams.iter().enumerate() {
+            let index = MAINTENANCE_ROWS + offset;
+            let selected = index == config.cursor && config.focus == Focus::Contents;
+            let is_pinned = !pinned.is_empty() && pinned == id;
+            let mut line = Line::from(vec![
+                Span::styled(
+                    if selected { "▸ " } else { "  " },
+                    Style::new().fg(sk.accent),
+                ),
+                Span::styled(
+                    if is_pinned { "● " } else { "  " },
+                    Style::new().fg(sk.success),
+                ),
+                Span::styled(format!("{title}  "), Style::new().fg(sk.foreground)),
+                Span::styled(id.clone(), Style::new().fg(sk.muted)),
+            ]);
+            if selected {
+                line = line.style(Style::new().bg(sk.selection));
+            }
+            lines.push(line);
+        }
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "enter run · the result goes to the activity log on the Stream Info tab",

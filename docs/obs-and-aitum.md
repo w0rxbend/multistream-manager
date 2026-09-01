@@ -138,7 +138,8 @@ have configured in Aitum might not be the one the broadcast is bound to, and the
 symptom is a stream that appears to go nowhere.
 
 List them with **Config → Housekeeping → *List YouTube stream keys***
-(<kbd>Alt</kbd>+<kbd>5</kbd>). The results go to the activity log:
+(<kbd>Alt</kbd>+<kbd>5</kbd>). Each one becomes a row you can move to and pin
+with <kbd>Enter</kbd>; the ids also go to the activity log:
 
 ```
 ID                         PINNED  TITLE

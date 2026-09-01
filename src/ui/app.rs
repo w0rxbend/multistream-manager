@@ -291,6 +291,14 @@ pub struct App {
     /// a hardcoded ten lines, which is a page and a half on a laptop and a
     /// third of one on a tall terminal.
     pub terminal_area: ratatui::layout::Rect,
+    /// The reusable YouTube stream ids the last listing found, as
+    /// `(id, title)`.
+    ///
+    /// Kept so they can be *chosen* rather than only read. The ids used to go
+    /// to the activity log and stop there, leaving the user to copy one out
+    /// by eye and hand-edit `[youtube] stream_id` in config.toml — the last
+    /// thing in the program that could only be done in a text editor.
+    pub youtube_streams: Vec<(String, String)>,
     /// OBS shortcuts already reported as shadowed, so the warning is said
     /// once rather than on every snapshot — which arrives once a second.
     reported_shortcut_clashes: std::collections::HashSet<String>,
@@ -553,6 +561,7 @@ impl App {
             auto_stop: plan.youtube_auto_stop,
             popup: None,
             terminal_area: ratatui::layout::Rect::default(),
+            youtube_streams: Vec::new(),
             reported_shortcut_clashes: std::collections::HashSet::new(),
             preflight: None,
             end_armed: None,
@@ -1502,7 +1511,8 @@ impl App {
         let Some(config) = self.config_tab.as_mut() else {
             return vec![];
         };
-        match config.cursor {
+        let cursor = config.cursor;
+        match cursor {
             0 => {
                 // The first press lists, the second deletes. Deleting things
                 // somebody made, without showing them first, would be asking
@@ -1512,8 +1522,44 @@ impl App {
                 vec![Command::Cleanup { delete }]
             }
             1 => vec![Command::ExportSuperchats],
-            _ => vec![Command::ListStreams],
+            2 => vec![Command::ListStreams],
+            // Past the three jobs are the streams the last listing found.
+            _ => self.pin_stream_id(cursor - super::config_tab::MAINTENANCE_ROWS),
         }
+    }
+
+    /// Pin one of the listed YouTube streams as `[youtube] stream_id`.
+    ///
+    /// This closes the last thing in the program that could only be done in a
+    /// text editor: the ids went to the activity log and stopped there, so
+    /// choosing one meant reading it off the screen, quitting, and editing
+    /// config.toml by hand.
+    fn pin_stream_id(&mut self, index: usize) -> Vec<Command> {
+        let Some((id, title)) = self.youtube_streams.get(index).cloned() else {
+            return vec![];
+        };
+
+        // Pressing enter on the stream already pinned unpins it, which is how
+        // you get back to "let YouTube choose" without editing the file.
+        let already = self.config.youtube.stream_id.trim() == id;
+        if already {
+            self.config.youtube.stream_id.clear();
+            self.notify(
+                super::toast::Level::Info,
+                format!("Unpinned {title} — YouTube will choose a stream again."),
+            );
+        } else {
+            self.config.youtube.stream_id = id.clone();
+            self.notify(
+                super::toast::Level::Success,
+                format!("Pinned {title} ({id}) as the stream to bind broadcasts to."),
+            );
+        }
+
+        // `stream_id` is one of the settings the engine is built from, so the
+        // worker has to be told or the next go-live would still use the old
+        // one. `save_appearance` writes the file and sends `ReloadConfig`.
+        self.save_appearance()
     }
 
     /// Authorise a second account for the selected platform.
@@ -2270,6 +2316,15 @@ impl App {
     /// of logging in was to get to the main view.
     pub fn handle_event(&mut self, event: Event) -> Vec<Command> {
         match event {
+            Event::Streams(streams) => {
+                self.youtube_streams = streams;
+                if !self.youtube_streams.is_empty() {
+                    self.push_log(
+                        LogLevel::Info,
+                        "Move down to a stream and press enter to pin it as [youtube] stream_id.",
+                    );
+                }
+            }
             Event::Log { level, message } => self.push_log(level, message),
 
             Event::Connected(results) => {
@@ -6263,6 +6318,33 @@ mod tests {
 
     /// Cleanup lists before it deletes. Removing things somebody made
     /// without showing them first would be asking for trust this has no way
+    /// The stream ids used to go to the activity log and stop there, so
+    /// choosing one meant reading it off the screen, quitting, and editing
+    /// config.toml by hand — the last thing in the program that could only be
+    /// done in a text editor.
+    #[test]
+    fn a_listed_youtube_stream_can_be_pinned_and_unpinned() {
+        let mut app = app();
+        app.handle_event(Event::Streams(vec![
+            ("id-one".into(), "Default stream".into()),
+            ("id-two".into(), "Vertical".into()),
+        ]));
+        go_to_config_section(&mut app, super::super::config_tab::Section::Maintenance);
+        app.handle_key(KeyEvent::from(KeyCode::Tab));
+
+        // Past the three jobs to the second listed stream.
+        for _ in 0..(super::super::config_tab::MAINTENANCE_ROWS + 1) {
+            app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        }
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(app.config.youtube.stream_id, "id-two");
+
+        // Enter again on the pinned one unpins it, which is how you get back
+        // to "let YouTube choose" without editing the file.
+        app.handle_key(KeyEvent::from(KeyCode::Enter));
+        assert!(app.config.youtube.stream_id.is_empty());
+    }
+
     /// The Config tab's keys are named actions now, so `[keys.config]` can
     /// rebind them. They used to be hardcoded `KeyCode` matches — unbindable,
     /// and invisible to which-key, the full binding map and the palette.
