@@ -151,6 +151,25 @@ fn dispatch(
 }
 
 /// Run the interactive application until the user quits.
+/// Await the next message from a receiver that may not exist yet.
+///
+/// `select!` needs every branch to be a future, but two of the channels in
+/// the loop below are optional — the OBS connection is absent when OBS
+/// control is turned off, and the Twitch event watcher is absent until a
+/// Twitch login is known. When the slot is empty this returns a future that
+/// is never ready, which a `select!` branch costs nothing at all to hold.
+///
+/// The return value distinguishes the two endings the caller must tell
+/// apart: `Some(message)` is a message, and `None` means the sending task
+/// has finished and the receiver in the slot is now dead and should be
+/// dropped.
+async fn recv_opt<T>(slot: &mut Option<tokio::sync::mpsc::UnboundedReceiver<T>>) -> Option<T> {
+    match slot.as_mut() {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 pub async fn run(config: Config) -> Result<()> {
     // Channels between the UI and the worker. Commands are bounded because a
     // backlog of them would mean the user is queueing work faster than the APIs
@@ -303,25 +322,28 @@ pub async fn run(config: Config) -> Result<()> {
             // OBS control is turned off, and a `select!` branch whose future
             // is never ready simply never fires — so this costs nothing at
             // all in that case.
-            Some(update) = async {
-                match obs_updates.as_mut() {
-                    Some(updates) => updates.recv().await,
-                    None => std::future::pending().await,
+            update = recv_opt(&mut obs_updates) => {
+                match update {
+                    Some(update) => app.handle_obs_update(update),
+                    // The task ended. Forget the closed receiver so that
+                    // reconnecting later can hand this loop a fresh one.
+                    None => obs_updates = None,
                 }
-            } => {
-                app.handle_obs_update(update);
             }
 
             // Twitch events that never touch chat. `None` until a Twitch
             // login is known — and a `select!` branch whose future is never
             // ready costs nothing, so this is free until then.
-            Some(update) = async {
-                match events_updates.as_mut() {
-                    Some(updates) => updates.recv().await,
-                    None => std::future::pending().await,
+            update = recv_opt(&mut events_updates) => {
+                match update {
+                    Some(update) => app.handle_events_update(update),
+                    // The watcher stopped — which is what turning the setting
+                    // off does. Clearing the slot is what lets the re-adoption
+                    // at the top of the loop pick up the next one; without it,
+                    // switching Twitch events off and on again left this loop
+                    // holding a dead receiver for the rest of the session.
+                    None => events_updates = None,
                 }
-            } => {
-                app.handle_events_update(update);
             }
 
             // Messages and state changes from the chat tasks. After the
