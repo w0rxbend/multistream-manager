@@ -1068,6 +1068,15 @@ impl Default for YouTubeConfig {
     }
 }
 
+/// The fastest the statistics may be polled.
+///
+/// Below this the polling spends API budget faster than the numbers change,
+/// and on YouTube it spends scarce daily quota to do it.
+const POLL_INTERVAL_MIN_SECS: u64 = 5;
+
+/// …and the slowest, beyond which the dashboard is not really live.
+const POLL_INTERVAL_MAX_SECS: u64 = 3600;
+
 impl Config {
     /// Load `config.toml`, or return defaults if it does not exist yet.
     pub fn load() -> Result<Self> {
@@ -1125,9 +1134,31 @@ impl Config {
                 merge_values(&mut document, &generated);
                 document.to_string()
             }
-            // No file yet, or a file we cannot parse. Either way the only thing
-            // to write is a complete new one; there are no comments to keep.
-            _ => format!("{}\n{generated}", CONFIG_HEADER),
+            // No file yet, or a file we cannot parse. Either way the only
+            // thing to write is a complete new one; there are no comments to
+            // keep.
+            //
+            // The unparseable case is destructive: the user's whole file —
+            // every hand-written comment in it — is about to be replaced
+            // because of one stray character. It is kept beside the new one
+            // rather than thrown away, so the fix is renaming a file back
+            // rather than rewriting it from memory.
+            other => {
+                if matches!(other, Some(Err(_))) {
+                    let backup = path.with_extension("toml.bak");
+                    // Best effort: failing to keep a copy is not a reason to
+                    // refuse to save, and the copy is a convenience rather
+                    // than a guarantee.
+                    if let Some(text) = existing.as_deref() {
+                        let _ = paths::write_secret_file(&backup, text);
+                        tracing::warn!(
+                            backup = %backup.display(),
+                            "the config file could not be parsed; the previous one was kept"
+                        );
+                    }
+                }
+                format!("{}\n{generated}", CONFIG_HEADER)
+            }
         };
 
         paths::write_secret_file(&path, &text)?;
@@ -1233,7 +1264,24 @@ impl Config {
     /// daily API quota for no benefit, since neither platform updates its viewer
     /// count that often, and an hour is already far longer than anyone wants.
     pub fn poll_interval(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.general.poll_interval_secs.clamp(5, 3600))
+        std::time::Duration::from_secs(self.clamped_poll_interval_secs())
+    }
+
+    /// The poll interval as it will actually be used, and the raw value if
+    /// they differ.
+    ///
+    /// The clamp was silent: writing `poll_interval_secs = 1` gave you five
+    /// with nothing anywhere saying the value had been ignored, so the
+    /// setting looked broken rather than bounded.
+    pub fn poll_interval_clamped_from(&self) -> Option<u64> {
+        let raw = self.general.poll_interval_secs;
+        (raw != self.clamped_poll_interval_secs()).then_some(raw)
+    }
+
+    fn clamped_poll_interval_secs(&self) -> u64 {
+        self.general
+            .poll_interval_secs
+            .clamp(POLL_INTERVAL_MIN_SECS, POLL_INTERVAL_MAX_SECS)
     }
 
     /// The redirect URI registered with both providers.
@@ -1886,18 +1934,59 @@ title = \"old title\"
         /// worth merging into, so a complete new one is written. This is
         /// destructive — it is recorded here so that it is a decision rather
         /// than a surprise.
+        /// The documented fallback: a file that cannot be parsed has nothing
+        /// worth merging into, so a complete new one is written. That is
+        /// destructive — every hand-written comment goes — so the previous
+        /// file is kept beside it rather than thrown away, and the fix is
+        /// renaming a file back rather than rewriting it from memory.
         #[test]
-        fn an_unparseable_file_is_replaced_with_a_complete_new_one() {
-            let saved = save_over("damaged", "this is not = = toml at [[ all", |_| {});
+        fn an_unparseable_file_is_replaced_but_kept_as_a_backup() {
+            let dir = std::env::temp_dir().join(format!("msm-save-damaged-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("creating the scratch directory");
+            let path = dir.join("config.toml");
+            let damaged = "# my careful notes\nthis is not = = toml at [[ all";
+            std::fs::write(&path, damaged).expect("writing the starting file");
 
+            let config = Config {
+                source_path: Some(path.clone()),
+                ..Default::default()
+            };
+            config.save().expect("saving must work");
+
+            let saved = std::fs::read_to_string(&path).expect("reading the saved file");
             assert!(
                 saved.starts_with(CONFIG_HEADER),
                 "the replacement must carry the explanatory header: {saved}"
             );
             assert!(
                 !saved.contains("not = = toml"),
-                "the damaged content is not preserved: {saved}"
+                "the damaged content is not preserved in place: {saved}"
             );
+
+            let backup = std::fs::read_to_string(path.with_extension("toml.bak"))
+                .expect("the damaged file has to be kept");
+            assert_eq!(
+                backup, damaged,
+                "the backup must be the file exactly as it was"
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// The clamp is right; applying it silently was not. A value outside
+        /// the range made the setting look broken rather than bounded.
+        #[test]
+        fn a_poll_interval_outside_the_range_is_clamped_and_reported() {
+            let mut config = Config::default();
+            assert_eq!(config.poll_interval_clamped_from(), None);
+
+            config.general.poll_interval_secs = 1;
+            assert_eq!(config.poll_interval().as_secs(), 5);
+            assert_eq!(config.poll_interval_clamped_from(), Some(1));
+
+            config.general.poll_interval_secs = 100_000;
+            assert_eq!(config.poll_interval().as_secs(), 3600);
+            assert_eq!(config.poll_interval_clamped_from(), Some(100_000));
         }
     }
 }

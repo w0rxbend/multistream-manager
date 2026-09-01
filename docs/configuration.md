@@ -159,6 +159,15 @@ than in the middle of a submission.
 
 ---
 
+> [!NOTE]
+> If `config.toml` cannot be parsed at all, `msm` starts on the defaults and
+> says so in the log. Saving from the interface then replaces the file — there
+> is nothing in a damaged file to merge into — but the previous one is kept
+> beside it as `config.toml.bak`, so recovering from a stray character is
+> renaming a file rather than rewriting your comments from memory.
+
+---
+
 ## `[general]`
 
 | Key | Type | Default | What it does |
@@ -175,7 +184,9 @@ during long sessions, raising this is the first thing to try — see
 [Troubleshooting](troubleshooting.md#youtube-quotaexceeded).
 
 The value is clamped rather than trusted: anything below 5 becomes 5, anything
-above 3600 becomes 3600.
+above 3600 becomes 3600. Config → Diagnostics says so when it happens, naming
+both what you wrote and what is being used — a clamp applied silently makes the
+setting look broken rather than bounded.
 
 ### `oauth_port`
 

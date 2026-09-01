@@ -155,6 +155,22 @@ pub fn run(config: &Config) -> Vec<Check> {
         }
     }
 
+    // A clamped setting. The clamp itself is right — polling faster than
+    // five seconds spends budget faster than the numbers change — but
+    // applying it silently made the setting look broken rather than bounded.
+    if let Some(raw) = config.poll_interval_clamped_from() {
+        checks.push(Check::warning(
+            format!(
+                "poll_interval_secs is {raw}, which is outside the allowed range; \
+                 {}s is being used",
+                config.poll_interval().as_secs()
+            ),
+            "Set it between 5 and 3600 in [general]. Faster than five seconds spends API \
+             budget — and YouTube's daily quota — faster than the numbers change."
+                .to_string(),
+        ));
+    }
+
     // Logins. Having none is the normal state of a fresh install, so it warns;
     // a saved-login file that cannot be read is real breakage, so it fails.
     match auth::store::TokenStore::load() {
