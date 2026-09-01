@@ -170,7 +170,16 @@ impl Key {
             KeyCode::PageDown => Some("PageDown".to_string()),
             KeyCode::Home => Some("Home".to_string()),
             KeyCode::End => Some("End".to_string()),
+            // Parsing has always accepted `<Insert>`; writing turned it into
+            // `<?>`, which parsing then refuses — so a binding on it could be
+            // set and never read back.
+            KeyCode::Insert => Some("Insert".to_string()),
             KeyCode::F(n) => Some(format!("F{n}")),
+            // `<` and `>` cannot be written bare: a naked `<` reads as the
+            // start of a bracketed name and parsing rejects it as "a `<` with
+            // no closing `>`". `<lt>` and `<gt>` are how vim spells them.
+            KeyCode::Char('<') => Some("lt".to_string()),
+            KeyCode::Char('>') => Some("gt".to_string()),
             KeyCode::Char(_) => None,
             _ => Some("?".to_string()),
         };
@@ -181,6 +190,13 @@ impl Key {
         }
         if self.modifiers.contains(KeyModifiers::ALT) {
             prefix.push_str("A-");
+        }
+        // Shift is only written for keys where it is a real distinction. On a
+        // letter the terminal reports the capital itself and `Key::new`
+        // strips the bit (see below), so writing `S-` there would produce a
+        // chord that parses to something else.
+        if self.modifiers.contains(KeyModifiers::SHIFT) && !matches!(self.code, KeyCode::Char(_)) {
+            prefix.push_str("S-");
         }
 
         match (named, self.code) {
@@ -491,6 +507,13 @@ mod tests {
             "<PageUp>",
             "]t",
             "<Leader>os",
+            // The three that used to fail: `<Insert>` was written as `<?>`,
+            // `<S-F5>` lost its shift, and `<lt>` came back as a naked `<`
+            // that parsing then rejected.
+            "<Insert>",
+            "<S-F5>",
+            "<lt>",
+            "<gt>",
         ] {
             let parsed = parse_chord(written, leader()).expect("parses");
             let printed = write_chord(&parsed, leader());

@@ -387,6 +387,7 @@ impl YouTubeBackend {
 
         for _ in 0..MAX_PAGES {
             let base = &self.base;
+            self.ledger.charge(crate::quota::cost::LIST_STREAMS);
             let mut url =
                 format!("{base}/liveStreams?part=id,snippet,cdn,status&mine=true&maxResults=50");
             if let Some(token) = &page_token {
@@ -632,6 +633,9 @@ impl YouTubeBackend {
 
         for _ in 0..MAX_PAGES {
             let base = &self.base;
+            // Charged per page, before the request: Google charges a failed
+            // one too, and the housekeeping job runs this twice.
+            self.ledger.charge(crate::quota::cost::LIST_BROADCASTS);
             let mut url =
                 format!("{base}/liveBroadcasts?part=id,snippet,status&mine=true&maxResults=50");
             if let Some(token) = &page_token {
@@ -664,6 +668,10 @@ impl YouTubeBackend {
     /// Delete one broadcast from the channel.
     async fn delete_broadcast_by_id(&self, id: &str) -> Result<()> {
         let base = &self.base;
+        // Fifty units each — clearing a long-neglected channel is one of the
+        // few things in this program that can spend a real slice of the day's
+        // allowance, and it was spending it invisibly.
+        self.ledger.charge(crate::quota::cost::DELETE_BROADCAST);
         let url = format!("{base}/liveBroadcasts?id={}", urlencoding::encode(id));
         let response = self
             .request(reqwest::Method::DELETE, &url)

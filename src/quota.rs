@@ -35,6 +35,12 @@ pub mod cost {
     pub const VIDEOS_LIST: u64 = 1;
     /// `channels.list` — the statistics poll's subscriber count.
     pub const CHANNELS_LIST: u64 = 1;
+    /// `liveBroadcasts.list` — one page of the housekeeping listing.
+    pub const LIST_BROADCASTS: u64 = 1;
+    /// `liveBroadcasts.delete` — removing one abandoned broadcast.
+    pub const DELETE_BROADCAST: u64 = 50;
+    /// `liveStreams.list` — one page of the reusable-stream listing.
+    pub const LIST_STREAMS: u64 = 1;
 }
 
 /// A local estimate of the daily unit spend. Every dispatched request is

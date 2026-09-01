@@ -520,10 +520,22 @@ pub async fn run(
                             ),
                         });
                     }
+                    // What it will cost. Fifty units per delete is one of the
+                    // few things in this program that can spend a real slice
+                    // of the day's YouTube allowance, and clearing a
+                    // long-neglected channel is exactly when it bites.
+                    let cost = found.len() as u64 * crate::quota::cost::DELETE_BROADCAST;
+                    let budget = match ledger.summary() {
+                        Some((used, limit, _)) => format!(
+                            " That will spend about {cost} units of the {} you have left today.",
+                            limit.saturating_sub(used)
+                        ),
+                        None => String::new(),
+                    };
                     let _ = events.send(Event::Log {
                         level: LogLevel::Warning,
                         message: format!(
-                            "{} abandoned broadcast(s). Press enter again to delete them.",
+                            "{} abandoned broadcast(s). Press enter again to delete them.{budget}",
                             found.len()
                         ),
                     });
