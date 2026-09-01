@@ -26,6 +26,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::chat::jitter::Lcg;
 use crate::chat::ratelimit::{SendDenied, TokenBucket};
 use crate::chat::source::{ChatCommand, ChatHandle, EventSender, TokenProvider, COMMAND_QUEUE};
 use crate::chat::{
@@ -554,26 +555,6 @@ impl DedupeRing {
 // ---------------------------------------------------------------------------
 // Cadence arithmetic (yc: poll.go NextInterval / climb)
 // ---------------------------------------------------------------------------
-
-/// A cheap linear congruential generator for jitter. Jitter needs speed and
-/// spread, not unpredictability, so no crypto-grade randomness is involved.
-#[derive(Debug, Clone, Copy)]
-struct Lcg(u64);
-
-impl Lcg {
-    fn new(seed: u64) -> Self {
-        Self(seed | 1)
-    }
-
-    /// A uniform draw in [0, 1).
-    fn next_f64(&mut self) -> f64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 11) as f64) / ((1u64 << 53) as f64)
-    }
-}
 
 /// Compute the next poll delay.
 ///
@@ -1480,15 +1461,7 @@ struct Poller {
 impl Poller {
     fn new(params: SpawnParams) -> Self {
         let now = std::time::Instant::now();
-        // Seeding jitter from the key means two chats never share a jitter
-        // sequence, which is the whole point of jittering.
-        let seed = params
-            .key
-            .target
-            .bytes()
-            .fold(0xcbf2_9ce4_8422_2325u64, |acc, byte| {
-                (acc ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-            });
+
         Self {
             // A floor of 0 in the config means "default", not "as fast as
             // possible": a 1 ms floor would let an error path retry-storm
@@ -1503,7 +1476,8 @@ impl Poller {
             ledger: params.quota.clone(),
             seen: DedupeRing::new(DEDUPE_RING_SIZE),
             bucket: TokenBucket::youtube(now),
-            jitter: Lcg::new(seed),
+            // Seeded from the key so two chats never share a sequence.
+            jitter: Lcg::seeded_by(&params.key.target),
             retained_token: None,
             live_chat_id: String::new(),
             label: params.key.target.clone(),
@@ -1794,11 +1768,18 @@ impl Poller {
                             }
                         }
 
+                        // The live `backoff`, not the floor. Passing the
+                        // constant here meant a single successful poll wiped
+                        // out a ladder that errors had spent minutes
+                        // climbing — so a flapping API was polled at full
+                        // speed the moment one request got through, and the
+                        // `decay` below (which eases the ladder back down
+                        // gradually) never had anything to ease.
                         let delay = next_interval(
                             server_floor,
                             self.floor,
                             self.ceiling,
-                            BACKOFF_FLOOR,
+                            backoff,
                             &mut self.jitter,
                         );
                         match self.sleep(&mut rx, delay).await {

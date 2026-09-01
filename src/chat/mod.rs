@@ -25,6 +25,7 @@
 
 pub mod chatlog;
 pub mod emoji;
+pub(crate) mod jitter;
 pub mod notify;
 pub mod ratelimit;
 pub mod render;

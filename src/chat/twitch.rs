@@ -59,6 +59,17 @@ const CTCP_DELIMITER: char = '\u{1}';
 const RECONNECT_INITIAL: Duration = Duration::from_secs(2);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(60);
 pub(crate) const RECONNECT_MAX_ATTEMPTS: u32 = 10;
+/// How long a session has to survive before it counts as a real connection
+/// and the reconnect ladder is allowed to start over.
+///
+/// Without a minimum, a connection that Twitch accepts and then immediately
+/// drops resets the ladder on every attempt: the delay never climbs past the
+/// first rung, the attempt budget is never spent, and the client reconnects
+/// every two seconds indefinitely. Thirty seconds is comfortably longer than
+/// a flap and far shorter than any session a person would notice.
+const RECONNECT_STABLE_SESSION: Duration = Duration::from_secs(30);
+/// How far either side of the ladder's delay a reconnect is spread.
+const RECONNECT_JITTER: f64 = 0.1;
 
 /// The NOTICE bodies Twitch sends when login credentials are rejected. These
 /// notices carry no msg-id tag, so the text is the only signal (twi:
@@ -292,14 +303,30 @@ async fn park(commands: &mut mpsc::Receiver<ChatCommand>, state: &TaskState) -> 
 }
 
 async fn run(mut state: TaskState, mut commands: mpsc::Receiver<ChatCommand>) {
-    // Completed failed attempts since the last successful registration.
+    // Completed failed attempts since the last session that stayed up.
     let mut attempt: u32 = 0;
+    // When the current session first heard from the server, so a session that
+    // survived can be told from one that flapped.
+    let mut connected_at: Option<std::time::Instant> = None;
+    // Seeded from the channel so that several chats dropped by the same
+    // outage do not climb the ladder in lockstep and retry together.
+    let mut jitter = crate::chat::jitter::Lcg::seeded_by(&state.channel);
     // One token re-fetch per outage (twi refreshes once per connect attempt):
     // when Twitch rejects the login, we reconnect immediately with a fresh
     // token; if that fresh token is rejected too, retrying would spin.
     let mut auth_refresh_available = true;
 
     'connect: loop {
+        // A session that stayed up long enough earns a fresh ladder. One that
+        // was accepted and dropped straight away does not, so a flapping
+        // connection still backs off instead of hammering.
+        if let Some(started) = connected_at.take() {
+            if started.elapsed() >= RECONNECT_STABLE_SESSION {
+                attempt = 0;
+                auth_refresh_available = true;
+            }
+        }
+
         if attempt == 0 {
             state.emit_status(ConnectionStatus::Connecting, "");
         } else {
@@ -317,6 +344,9 @@ async fn run(mut state: TaskState, mut commands: mpsc::Receiver<ChatCommand>) {
                     }
                 }
             };
+            // The ladder itself stays exact and testable; the spread is
+            // applied here, at the one place that actually waits.
+            let delay = jitter.spread(delay, RECONNECT_JITTER);
             state.emit_status(
                 ConnectionStatus::Reconnecting,
                 format!(
@@ -483,8 +513,10 @@ async fn run(mut state: TaskState, mut commands: mpsc::Receiver<ChatCommand>) {
                         }
                         if !connected {
                             connected = true;
-                            attempt = 0;
-                            auth_refresh_available = true;
+                            // Not `attempt = 0` — that is decided at the top of
+                            // the next connect, once it is known whether this
+                            // session lasted or merely flapped.
+                            connected_at = Some(std::time::Instant::now());
                             state.emit_status(ConnectionStatus::Connected, "");
                         }
                         state.handle_message(msg);
