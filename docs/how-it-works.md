@@ -227,6 +227,12 @@ Some choices made in step 2, and the reasons:
   after the fact.
 * **The monitor stream is off.** That is YouTube Studio's preview pane, and
   turning it off removes several seconds of delay before viewers see you.
+* **`latencyPreference` is `low`.** The default, `normal`, is 30-60 seconds
+  glass-to-glass, which makes answering chat an exercise in replying to
+  something a minute old. `low` is the balanced setting YouTube recommends: it
+  keeps DVR and the higher resolutions, where `ultraLow` gives both up. This
+  and the monitor stream are the same intent — the delay between doing
+  something and viewers seeing it is what makes a stream feel live.
 * **`selfDeclaredMadeForKids`** is sent on every broadcast because YouTube
   requires the declaration.
 

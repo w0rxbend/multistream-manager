@@ -490,6 +490,13 @@ impl YouTubeBackend {
                 // The monitor stream is YouTube Studio's preview pane. Turning
                 // it off removes a few seconds of delay before viewers see you.
                 "monitorStream": { "enableMonitorStream": false },
+                // …and so does this, by rather more. The default is `normal`:
+                // 30-60 seconds glass-to-glass, which makes answering chat
+                // an exercise in replying to something a minute old. Setting
+                // it here honours the intent the line above already states —
+                // `low` is the balanced option YouTube recommends, keeping
+                // DVR and 1440p/4K, where `ultraLow` gives those up.
+                "latencyPreference": "low",
             }
         });
 

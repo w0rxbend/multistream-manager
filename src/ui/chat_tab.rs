@@ -122,6 +122,14 @@ pub enum ComposeEdit {
     Clear,
 }
 
+/// How far back the activity view looks.
+///
+/// It is the "who paid me tonight" list, and on a busy chat 400 messages is
+/// under two minutes — so the pane silently dropped most of what it exists to
+/// show. The scan is cheap (a projection over the ring, no second store), so
+/// this is the scrollback limit rather than a fraction of it.
+const ACTIVITY_SCAN: usize = 5_000;
+
 /// How many rows of context to leave below a search match.
 ///
 /// A match pinned to the bottom row answers "was it said" and not "what
@@ -1738,7 +1746,7 @@ fn draw_activity(frame: &mut Frame, area: Rect, state: &ChatTabState, platform: 
     };
     let len = chat.state.messages.len();
     let mut lines: Vec<Line> = Vec::new();
-    for index in (len.saturating_sub(400)..len).rev() {
+    for index in (len.saturating_sub(ACTIVITY_SCAN)..len).rev() {
         if lines.len() >= 200 || lines.len() >= area.height as usize {
             break;
         }

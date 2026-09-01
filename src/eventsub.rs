@@ -90,6 +90,13 @@ pub struct StreamEvent {
 /// The classes of event this module can report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
+    /// The channel started or stopped broadcasting.
+    ///
+    /// Going live was learned only from the statistics poll, which runs every
+    /// fifteen seconds by default — and it is the state change that gates the
+    /// notifications, the uptime counter and the header's health strip.
+    /// Neither subscription needs any scope at all.
+    StreamState,
     Follow,
     Redemption,
     HypeTrain,
@@ -332,6 +339,19 @@ type Source = futures_util::stream::SplitStream<
 /// program can see; anything IRC already delivers is left to IRC, because two
 /// notifications for one event is worse than one.
 const SUBSCRIPTIONS: &[Subscription] = &[
+    // Going live and stopping. Free — neither needs a scope — and they are
+    // the state change everything else keys off, learned until now only from
+    // a fifteen-second poll.
+    Subscription {
+        name: "stream.online",
+        version: "1",
+        needs_moderator: false,
+    },
+    Subscription {
+        name: "stream.offline",
+        version: "1",
+        needs_moderator: false,
+    },
     Subscription {
         name: "channel.follow",
         version: "2",
@@ -443,6 +463,18 @@ fn interpret(envelope: &Envelope) -> Option<StreamEvent> {
     let name = |value: &Option<String>| value.clone().unwrap_or_else(|| "somebody".to_string());
 
     let built = match subscription.subscription_type.as_str() {
+        "stream.online" => StreamEvent {
+            title: "Twitch is live".to_string(),
+            detail: "Twitch is receiving your broadcast.".to_string(),
+            kind: EventKind::StreamState,
+        },
+        "stream.offline" => StreamEvent {
+            title: "Twitch stopped receiving".to_string(),
+            // The wording matters: this is the encoder-died case, and it
+            // reads very differently from "you ended your stream".
+            detail: "Twitch is no longer receiving your broadcast.".to_string(),
+            kind: EventKind::StreamState,
+        },
         "channel.follow" => StreamEvent {
             title: "New follower".to_string(),
             detail: name(&event.user_name),
@@ -570,6 +602,47 @@ mod tests {
 
     fn envelope(json: &str) -> Envelope {
         serde_json::from_str(json).expect("the fixture must parse")
+    }
+
+    /// Going live was learned only from the statistics poll, which runs every
+    /// fifteen seconds — and it is the state change that gates the
+    /// notifications, the uptime counter and the header's health strip.
+    #[test]
+    fn going_live_and_stopping_arrive_as_events() {
+        let live = interpret(&envelope(
+            r#"{"metadata":{"message_type":"notification",
+                "subscription_type":"stream.online"},
+                "payload":{"subscription":{"type":"stream.online"},"event":{}}}"#,
+        ))
+        .expect("a stream.online is described");
+        assert_eq!(live.kind, EventKind::StreamState);
+        assert!(live.title.contains("live"), "{live:?}");
+
+        let off = interpret(&envelope(
+            r#"{"metadata":{"message_type":"notification",
+                "subscription_type":"stream.offline"},
+                "payload":{"subscription":{"type":"stream.offline"},"event":{}}}"#,
+        ))
+        .expect("a stream.offline is described");
+        assert_eq!(off.kind, EventKind::StreamState);
+        // The wording matters: this is the encoder-died case, and it reads
+        // very differently from "you ended your stream".
+        assert!(
+            off.detail.contains("no longer receiving"),
+            "{off:?}"
+        );
+    }
+
+    /// Both need no scope at all, which is why they can simply be added.
+    #[test]
+    fn the_stream_state_subscriptions_need_no_moderator_identity() {
+        for wanted in ["stream.online", "stream.offline"] {
+            let subscription = SUBSCRIPTIONS
+                .iter()
+                .find(|subscription| subscription.name == wanted)
+                .unwrap_or_else(|| panic!("{wanted} is subscribed to"));
+            assert!(!subscription.needs_moderator);
+        }
     }
 
     /// The event this module exists for. Nothing else in the program can see

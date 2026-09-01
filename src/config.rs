@@ -968,6 +968,10 @@ impl NotificationsConfig {
     pub fn wants(&self, kind: crate::eventsub::EventKind) -> bool {
         use crate::eventsub::EventKind;
         match kind {
+            // The same switch as the poll-driven notice, so somebody who
+            // turned stream-state notifications off does not start getting
+            // them again from a second source.
+            EventKind::StreamState => self.stream_state,
             EventKind::Follow => self.follows,
             EventKind::Redemption => self.redemptions,
             EventKind::HypeTrain => self.hype_trains,
