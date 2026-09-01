@@ -486,10 +486,13 @@ pub async fn run(
                 // The list is always taken fresh, even on the confirming
                 // press — but on that press it is used to *narrow* what was
                 // approved, never to widen it.
-                let found = match crate::maintenance::find_stale_broadcasts(&config, ledger.clone())
-                    .await
+                let listing = match crate::maintenance::find_stale_broadcasts(
+                    &config,
+                    ledger.clone(),
+                )
+                .await
                 {
-                    Ok(found) => found,
+                    Ok(listing) => listing,
                     Err(err) => {
                         let _ = events.send(Event::Log {
                             level: LogLevel::Error,
@@ -499,6 +502,20 @@ pub async fn run(
                         continue;
                     }
                 };
+
+                let found = listing.broadcasts;
+                // The page cap is real and used to be silent. A channel with
+                // more than five hundred broadcasts is precisely the one with
+                // hundreds to clear, and it was told a number that was not
+                // the whole number.
+                if listing.truncated {
+                    let _ = events.send(Event::Log {
+                        level: LogLevel::Warning,
+                        message: "There are more broadcasts than one listing can reach — run \
+                                  this again after deleting these to catch the rest."
+                            .into(),
+                    });
+                }
 
                 if found.is_empty() {
                     let _ = events.send(Event::Log {
@@ -607,7 +624,19 @@ pub async fn run(
             }
 
             Command::ExportSuperchats => {
-                let _ = events.send(match crate::maintenance::export_superchats(&config) {
+                // On the blocking pool, like the clipboard path below. This
+                // line-reads and JSON-parses every rotated chat log — on a
+                // long-running channel that is megabytes — and doing it in
+                // the command loop stalled every other command behind it.
+                let config_for_export = config.clone();
+                let exported = tokio::task::spawn_blocking(move || {
+                    crate::maintenance::export_superchats(&config_for_export)
+                })
+                .await
+                .unwrap_or_else(|err| {
+                    Err(anyhow::anyhow!("the export task did not finish: {err}"))
+                });
+                let _ = events.send(match exported {
                     // Zero rows is almost always the same cause: the export
                     // reads the chat logs, and the chat log is off by
                     // default. Reporting a successful export of nothing was
@@ -641,14 +670,11 @@ pub async fn run(
             }
 
             Command::ListStreams => {
-                let Some(engine) = engine.as_mut() else {
-                    let _ = events.send(Event::Log {
-                        level: LogLevel::Error,
-                        message: "Not connected yet, so there are no streams to list.".into(),
-                    });
-                    continue;
-                };
-                match engine.list_ingest_endpoints(Platform::YouTube).await {
+                // Its own connection, like the other two housekeeping jobs.
+                // Requiring the shared engine meant the one job most needed
+                // during first-run setup — finding the id to pin, before you
+                // have ever gone live — was the only one that refused then.
+                match crate::maintenance::list_stream_ids(&config, ledger.clone()).await {
                     Ok(endpoints) if endpoints.is_empty() => {
                         let _ = events.send(Event::Log {
                             level: LogLevel::Warning,

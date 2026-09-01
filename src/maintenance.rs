@@ -61,7 +61,7 @@ fn plural(count: usize) -> &'static str {
 pub async fn find_stale_broadcasts(
     config: &Config,
     ledger: crate::quota::QuotaStore,
-) -> Result<Vec<StaleBroadcast>> {
+) -> Result<crate::model::StaleListing> {
     let mut engine = youtube_engine(config, ledger).await?;
     engine.list_stale_broadcasts(Platform::YouTube).await
 }
@@ -111,6 +111,20 @@ pub async fn delete_broadcasts(
         }
     }
     Ok(report)
+}
+
+/// The reusable stream ids on the channel.
+///
+/// Builds its own YouTube connection, the way the cleanup and export jobs do.
+/// This used to require the shared engine — so the one job most needed during
+/// first-run setup, when you are trying to find the id to pin before you have
+/// ever gone live, was the only one that refused to run then.
+pub async fn list_stream_ids(
+    config: &Config,
+    ledger: crate::quota::QuotaStore,
+) -> Result<Vec<crate::model::IngestEndpoint>> {
+    let mut engine = youtube_engine(config, ledger).await?;
+    engine.list_ingest_endpoints(Platform::YouTube).await
 }
 
 /// Write every paid event from the chat logs to a CSV file.

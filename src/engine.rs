@@ -16,7 +16,7 @@ use crate::auth;
 use crate::backend::{Backend, PlatformResult};
 use crate::config::Config;
 use crate::model::{
-    Category, EndOutcome, IngestEndpoint, Platform, PlatformStats, StaleBroadcast, StreamPlan,
+    Category, EndOutcome, IngestEndpoint, Platform, PlatformStats, StreamPlan,
 };
 use crate::twitch::TwitchBackend;
 use crate::youtube::YouTubeBackend;
@@ -355,7 +355,7 @@ impl Engine {
     pub async fn list_stale_broadcasts(
         &mut self,
         platform: Platform,
-    ) -> Result<Vec<StaleBroadcast>> {
+    ) -> Result<crate::model::StaleListing> {
         self.backend(platform)?.list_stale_broadcasts().await
     }
 

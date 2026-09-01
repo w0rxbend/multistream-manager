@@ -830,6 +830,19 @@ pub struct StaleBroadcast {
     pub status: String,
 }
 
+/// What a stale-broadcast listing found, and whether it found all of it.
+#[derive(Debug, Clone, Default)]
+pub struct StaleListing {
+    pub broadcasts: Vec<StaleBroadcast>,
+    /// The listing stopped at its page cap and there are more.
+    ///
+    /// The cap is real — ten pages of fifty — and it was silent. A channel
+    /// with more than five hundred broadcasts is precisely the one with
+    /// hundreds to clear, and it was told "12 abandoned broadcasts" while the
+    /// rest stayed invisible, so the job looked finished and was not.
+    pub truncated: bool,
+}
+
 /// A single live statistic, rendered as one row in the dashboard table.
 #[derive(Debug, Clone)]
 pub struct Stat {

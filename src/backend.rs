@@ -10,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::model::{
-    Category, EndOutcome, GoLiveOutcome, IngestEndpoint, Platform, PlatformStats, StaleBroadcast,
+    Category, EndOutcome, GoLiveOutcome, IngestEndpoint, Platform, PlatformStats, StaleListing,
     StreamPlan,
 };
 
@@ -149,8 +149,8 @@ pub trait Backend: Send {
     /// Twitch, where the channel is permanently there and going live means no
     /// more than pointing OBS at it — return an empty vector, so there is never
     /// anything for the command to offer to delete.
-    fn list_stale_broadcasts(&mut self) -> BoxFuture<'_, Result<Vec<StaleBroadcast>>> {
-        Box::pin(async { Ok(Vec::new()) })
+    fn list_stale_broadcasts(&mut self) -> BoxFuture<'_, Result<StaleListing>> {
+        Box::pin(async { Ok(StaleListing::default()) })
     }
 
     /// Delete one broadcast by its platform id.

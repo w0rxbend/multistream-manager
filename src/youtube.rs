@@ -99,6 +99,8 @@ pub struct YouTubeBackend {
     /// when reading has to stop was being computed from a number wrong by
     /// more than half the budget.
     ledger: crate::quota::QuotaStore,
+    /// Whether the last broadcast listing stopped at its page cap.
+    broadcasts_truncated: bool,
     /// Where the Data API lives. Always [`API`] in the running program; the
     /// tests point it at a local server so real request behaviour — such as
     /// whether page tokens are followed — can be observed.
@@ -266,6 +268,7 @@ impl YouTubeBackend {
             category_cache: None,
             quota: QuotaBackoff::default(),
             ledger,
+            broadcasts_truncated: false,
             base: API.to_string(),
             upload_base: UPLOAD_API.to_string(),
         }
@@ -625,7 +628,7 @@ impl YouTubeBackend {
     /// The page count is capped because each page costs API quota, and because
     /// an unexpected reply that kept handing back a page token would otherwise
     /// spin here forever.
-    async fn list_broadcasts(&self) -> Result<Vec<LiveBroadcastResource>> {
+    async fn list_broadcasts(&mut self) -> Result<Vec<LiveBroadcastResource>> {
         const MAX_PAGES: usize = 10;
 
         let mut out = Vec::new();
@@ -658,8 +661,20 @@ impl YouTubeBackend {
 
             match body.next_page_token {
                 Some(token) if !token.is_empty() => page_token = Some(token),
-                _ => break,
+                _ => {
+                    page_token = None;
+                    break;
+                }
             }
+        }
+
+        // The cap is real and was silent. A channel with more than 500
+        // broadcasts is precisely the one with hundreds to clear, and it was
+        // told "12 abandoned broadcasts" while the rest stayed invisible —
+        // so the job looked finished and was not.
+        self.broadcasts_truncated = page_token.is_some();
+        if self.broadcasts_truncated {
+            tracing::warn!("stopped listing broadcasts at the page cap; more remain");
         }
 
         Ok(out)
@@ -1139,26 +1154,30 @@ impl Backend for YouTubeBackend {
         })
     }
 
-    fn list_stale_broadcasts(&mut self) -> BoxFuture<'_, Result<Vec<StaleBroadcast>>> {
+    fn list_stale_broadcasts(&mut self) -> BoxFuture<'_, Result<crate::model::StaleListing>> {
         Box::pin(async move {
-            Ok(self
-                .list_broadcasts()
-                .await?
-                .into_iter()
-                .filter(never_went_live)
-                .map(|broadcast| {
-                    let snippet = broadcast.snippet.unwrap_or_default();
-                    StaleBroadcast {
-                        id: broadcast.id,
-                        title: snippet.title,
-                        scheduled_start: snippet.scheduled_start_time,
-                        status: broadcast
-                            .status
-                            .map(|status| status.life_cycle_status)
-                            .unwrap_or_default(),
-                    }
-                })
-                .collect())
+            let listed = self.list_broadcasts().await?;
+            Ok(crate::model::StaleListing {
+                broadcasts: listed
+                    .into_iter()
+                    .filter(never_went_live)
+                    .map(|broadcast| {
+                        let snippet = broadcast.snippet.unwrap_or_default();
+                        StaleBroadcast {
+                            id: broadcast.id,
+                            title: snippet.title,
+                            scheduled_start: snippet.scheduled_start_time,
+                            status: broadcast
+                                .status
+                                .map(|status| status.life_cycle_status)
+                                .unwrap_or_default(),
+                        }
+                    })
+                    .collect(),
+                // Carried out rather than only logged: a partial list
+                // reported as the whole truth makes the job look finished.
+                truncated: self.broadcasts_truncated,
+            })
         })
     }
 
