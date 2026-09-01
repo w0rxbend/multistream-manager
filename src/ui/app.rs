@@ -127,6 +127,23 @@ pub struct LogLine {
 /// later must not end a stream.
 const END_CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// A category search that has not been sent yet.
+#[derive(Debug, Clone)]
+pub struct PendingSearch {
+    pub platform: Platform,
+    pub query: String,
+    /// When the last keystroke arrived. The request goes out once this is
+    /// [`SEARCH_DEBOUNCE`] old.
+    pub typed_at: std::time::Instant,
+}
+
+/// How long the typing has to stop before a category search is sent.
+///
+/// Long enough to swallow the gap between letters at any normal typing speed,
+/// short enough that the list still feels like it is keeping up. The whole
+/// point is that a request is spent per *word* rather than per keystroke.
+const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(180);
+
 /// The autocomplete list that drops down under a field.
 #[derive(Debug, Clone)]
 pub struct Popup {
@@ -264,6 +281,14 @@ pub struct App {
     /// Incremented on every keystroke that triggers a search, so that a slow
     /// reply to an earlier keystroke can be recognised as stale and dropped.
     pub search_generation: u64,
+    /// A category search waiting for the typing to stop.
+    ///
+    /// Every keystroke used to dispatch its own request. Typing
+    /// "Baldur's Gate 3" was fifteen Helix calls, fourteen of them thrown away
+    /// by the generation check the moment the next letter arrived — rate-limit
+    /// pressure and radio time spent on answers nobody would read. The query
+    /// is held here instead and sent once the keystrokes stop.
+    pub pending_search: Option<PendingSearch>,
     /// Bumped on every go-live submission; the worker echoes it back in
     /// [`Event::WentLive`], so an answer to a superseded submission can be
     /// recognised as stale and dropped.
@@ -492,6 +517,7 @@ impl App {
             preflight: None,
             end_armed: None,
             search_generation: 0,
+            pending_search: None,
             go_generation: 0,
             log: VecDeque::new(),
             accounts: BTreeMap::new(),
@@ -3489,14 +3515,45 @@ impl App {
                     fallback,
                 });
 
-                vec![Command::SearchCategories {
+                // Held rather than sent: `tick_search` below dispatches it
+                // once the keystrokes stop.
+                self.pending_search = Some(PendingSearch {
                     platform,
                     query,
-                    generation: self.search_generation,
-                }]
+                    typed_at: std::time::Instant::now(),
+                });
+                vec![]
             }
             _ => vec![],
         }
+    }
+
+    /// Whether a held category search is waiting for the typing to stop.
+    ///
+    /// The event loop polls its debounce clock only while this is true, so an
+    /// idle program does no extra work at all.
+    pub fn search_is_pending(&self) -> bool {
+        self.pending_search.is_some()
+    }
+
+    /// Send a held category search once the typing has stopped.
+    ///
+    /// Called from the event loop's debounce tick. Returns nothing while the
+    /// user is still typing, which is the whole point.
+    pub fn tick_search(&mut self, now: std::time::Instant) -> Vec<Command> {
+        let Some(pending) = self.pending_search.as_ref() else {
+            return vec![];
+        };
+        if now.duration_since(pending.typed_at) < SEARCH_DEBOUNCE {
+            return vec![];
+        }
+
+        let pending = self.pending_search.take().expect("just checked");
+        vec![Command::SearchCategories {
+            platform: pending.platform,
+            query: pending.query,
+            generation: self.search_generation,
+        }]
     }
 
     /// The built-in YouTube category list, filtered by whatever is typed in the
@@ -4218,8 +4275,10 @@ mod tests {
         assert!(app.popup.is_none(), "accepting should close the popup");
     }
 
+    /// Typing holds a search rather than sending one per keystroke, and the
+    /// held search goes out once the typing stops.
     #[test]
-    fn typing_in_the_twitch_category_field_requests_a_search() {
+    fn typing_in_the_twitch_category_field_requests_one_search_when_typing_stops() {
         let mut app = app_on_form();
         app.field_cursor = Field::ORDER
             .iter()
@@ -4227,13 +4286,30 @@ mod tests {
             .unwrap();
 
         let commands = type_and_collect(&mut app, "chess");
-        assert!(commands.iter().any(|c| matches!(
-            c,
-            Command::SearchCategories {
-                platform: Platform::Twitch,
-                ..
-            }
-        )));
+        assert!(
+            commands.is_empty(),
+            "five keystrokes must not be five Helix calls: {commands:?}"
+        );
+        assert!(app.search_is_pending());
+
+        // Still typing: nothing goes out.
+        assert!(app.tick_search(std::time::Instant::now()).is_empty());
+
+        // Typing stopped.
+        let later = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let commands = app.tick_search(later);
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [Command::SearchCategories {
+                    platform: Platform::Twitch,
+                    query,
+                    ..
+                }] if query == "chess"
+            ),
+            "one search, for the whole word: {commands:?}"
+        );
+        assert!(!app.search_is_pending(), "and it is not sent twice");
     }
 
     #[test]
@@ -5098,8 +5174,11 @@ mod tests {
             vec![("20".to_string(), "Gaming".to_string())],
             "the built-in list should be filtered locally, like the language field"
         );
-        // The API search is still issued: the full list replaces these as soon
-        // as YouTube can be reached.
+        // The API search is still issued once the typing stops: the full list
+        // replaces these as soon as YouTube can be reached.
+        let _ = commands;
+        let later = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let commands = app.tick_search(later);
         assert!(commands.iter().any(|c| matches!(
             c,
             Command::SearchCategories {

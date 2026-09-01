@@ -247,6 +247,13 @@ pub async fn run(config: Config) -> Result<()> {
     let mut frames = tokio::time::interval(crate::anim::FRAME_INTERVAL);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // How often a held category search is checked against its debounce. Fast
+    // relative to the debounce itself, so the wait is roughly what it says it
+    // is rather than that plus up to a whole tick; gated on there being a
+    // search to send, so an idle program never wakes for it.
+    let mut debounce = tokio::time::interval(std::time::Duration::from_millis(50));
+    debounce.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     // How often the process telemetry is re-read. Once a second: these
     // numbers are for noticing a trend, and a figure that jumps ten times a
     // second is harder to read than one that does not.
@@ -401,6 +408,13 @@ pub async fn run(config: Config) -> Result<()> {
                         tracing::debug!("statistics poll skipped: the worker is still busy");
                     }
                 }
+            }
+
+            // The category-search debounce, ticking only while a search is
+            // being held back. An idle program never polls this at all.
+            _ = debounce.tick(), if app.search_is_pending() => {
+                let commands = app.tick_search(std::time::Instant::now());
+                dispatch(&mut app, &command_tx, commands);
             }
 
             // The animation clock, ticking only while something is moving.

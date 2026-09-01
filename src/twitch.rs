@@ -10,6 +10,7 @@
 //! has to be looked up first. That lookup is also what powers the autocomplete
 //! in the form.
 
+use std::collections::VecDeque;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use std::time::Instant;
@@ -43,7 +44,19 @@ pub struct TwitchBackend {
     /// the next poll tries again instead of showing a blank row for the whole
     /// refresh window.
     audience_cache: Option<(Instant, Option<u64>, Option<u64>)>,
+    /// Recent category searches, keyed on the lowercased query.
+    ///
+    /// The YouTube backend has always cached its category list; this side had
+    /// nothing at all, so every search — including returning to a query asked
+    /// a moment ago, which backspacing does constantly — was a fresh Helix
+    /// call. Small and bounded: this is a typing aid, not a database, and a
+    /// stale answer costs nothing because category names do not change during
+    /// a stream.
+    category_cache: VecDeque<(String, Vec<Category>)>,
 }
+
+/// How many category searches are remembered.
+const CATEGORY_CACHE: usize = 32;
 
 impl TwitchBackend {
     pub fn new(http: reqwest::Client, client_id: String, access_token: String) -> Self {
@@ -55,6 +68,7 @@ impl TwitchBackend {
             login: None,
             base: HELIX.to_string(),
             audience_cache: None,
+            category_cache: VecDeque::new(),
         }
     }
 
@@ -104,9 +118,18 @@ impl TwitchBackend {
     /// Twitch's search is fuzzy, so "software" finds "Software and Game
     /// Development". Results come back in Twitch's own relevance order, which is
     /// good enough to show directly in the autocomplete list.
-    pub async fn search_categories_impl(&self, query: &str) -> Result<Vec<Category>> {
+    pub async fn search_categories_impl(&mut self, query: &str) -> Result<Vec<Category>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
+        }
+
+        let key = query.trim().to_lowercase();
+        if let Some((_, cached)) = self
+            .category_cache
+            .iter()
+            .find(|(cached_key, _)| *cached_key == key)
+        {
+            return Ok(cached.clone());
         }
 
         let url = format!(
@@ -126,14 +149,21 @@ impl TwitchBackend {
             .await
             .context("parsing the Twitch category search response")?;
 
-        Ok(body
+        let categories: Vec<Category> = body
             .data
             .into_iter()
             .map(|c| Category {
                 id: c.id,
                 name: c.name,
             })
-            .collect())
+            .collect();
+
+        self.category_cache.push_back((key, categories.clone()));
+        while self.category_cache.len() > CATEGORY_CACHE {
+            self.category_cache.pop_front();
+        }
+
+        Ok(categories)
     }
 
     /// Fetch the RTMP stream key so the dashboard can display it.
@@ -780,6 +810,42 @@ mod tests {
         // The live/viewer status is genuinely time-sensitive and is still asked
         // for on every poll.
         assert_eq!(paths.iter().filter(|p| p.ends_with("/streams")).count(), 5);
+    }
+
+    /// Every keystroke used to be its own Helix call, and returning to a
+    /// query already asked — which backspacing does constantly — asked again.
+    #[tokio::test]
+    async fn a_repeated_category_search_is_answered_from_the_cache() {
+        let (base, seen) = fake_helix(StdDuration::from_millis(0)).await;
+        let mut backend = backend_for(base);
+
+        for _ in 0..3 {
+            backend
+                .search_categories_impl("chess")
+                .await
+                .expect("the fake server always answers");
+        }
+        // A different query is genuinely different and must still be asked.
+        backend
+            .search_categories_impl("CHESS ")
+            .await
+            .expect("the fake server always answers");
+        backend
+            .search_categories_impl("baldur")
+            .await
+            .expect("the fake server always answers");
+
+        let searches = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.contains("search/categories"))
+            .count();
+        assert_eq!(
+            searches, 2,
+            "three identical searches plus a differently-cased repeat is one call, \
+             and the new query is the second"
+        );
     }
 
     /// Only a deliberate refusal deserves to be remembered. A timeout, a 429 or
