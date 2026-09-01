@@ -1047,6 +1047,11 @@ impl App {
             Action::ChatSearchPrevious => self.chat.search_step(false),
             Action::ChatJoin => self.chat.mode = super::chat_tab::ChatFocus::Join(String::new()),
             Action::ChatClose => self.chat.close_active_chat(),
+            // A marker is worth a key rather than a typed command: the moment
+            // you want to mark is the moment you have no hands free, which is
+            // the whole reason a bookmark in the VOD beats scrubbing for it
+            // later.
+            Action::ChatMarker => self.chat.mark_moment(),
 
             // The Config tab's own keys, as named actions rather than the
             // hardcoded `KeyCode` matches they used to be. Being actions is

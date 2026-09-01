@@ -199,6 +199,28 @@ impl TaskState {
         ));
     }
 
+    /// Drop a marker at the current point of the broadcast.
+    ///
+    /// Its own task, like the clip: this must not block the chat loop, and a
+    /// marker that takes two seconds to confirm should not delay a message.
+    fn start_marker(&self, description: String) {
+        let account_user_id = self.account_user_id.clone();
+        let client_id = self.client_id.clone();
+        let http = self.http.clone();
+        let tokens = self.tokens.clone();
+        let events = self.events.clone();
+        let key = self.key.clone();
+        tokio::spawn(run_marker(
+            account_user_id,
+            client_id,
+            http,
+            tokens,
+            events,
+            key,
+            description,
+        ));
+    }
+
     fn remember_channel_id(&mut self, id: &str) {
         if !id.is_empty() && self.channel_id.as_deref() != Some(id) {
             self.channel_id = Some(id.to_string());
@@ -295,6 +317,7 @@ async fn park(commands: &mut mpsc::Receiver<ChatCommand>, state: &TaskState) -> 
             }
             Some(ChatCommand::Unraid) => state.start_moderation(ModerationAction::Unraid),
             Some(ChatCommand::Clip) => state.start_clip(),
+            Some(ChatCommand::Marker { description }) => state.start_marker(description),
             Some(ChatCommand::Send { .. }) => {
                 state.emit_notice("not connected to Twitch chat; press ctrl+r to reconnect");
             }
@@ -390,6 +413,9 @@ async fn run(mut state: TaskState, mut commands: mpsc::Receiver<ChatCommand>) {
                             state.start_moderation(ModerationAction::Unraid)
                         }
                         Some(ChatCommand::Clip) => state.start_clip(),
+                        Some(ChatCommand::Marker { description }) => {
+                            state.start_marker(description)
+                        }
                     }
                 }
             }
@@ -477,6 +503,9 @@ async fn run(mut state: TaskState, mut commands: mpsc::Receiver<ChatCommand>) {
                         state.start_moderation(ModerationAction::Unraid)
                     }
                     Some(ChatCommand::Clip) => state.start_clip(),
+                    Some(ChatCommand::Marker { description }) => {
+                        state.start_marker(description)
+                    }
                 },
                 msg = incoming.recv() => match msg {
                     None => {
@@ -953,6 +982,110 @@ async fn twitch_error_message(response: reqwest::Response) -> String {
         format!("HTTP {status}")
     } else {
         body.message
+    }
+}
+
+/// `POST /helix/streams/markers` — a bookmark in the VOD at the current
+/// moment.
+///
+/// The scope it needs, `channel:manage:broadcast`, is one the token already
+/// carries for setting the title, so this costs nobody a re-authorisation.
+/// Twitch refuses when the channel is not live and when the account has no
+/// VOD storage, and both refusals are worth passing through verbatim rather
+/// than flattening into "it did not work".
+async fn run_marker(
+    account_user_id: String,
+    client_id: String,
+    http: reqwest::Client,
+    tokens: TokenProvider,
+    events: EventSender,
+    key: ChatKey,
+    description: String,
+) {
+    let notice = |text: String| {
+        let _ = events.send((
+            key.clone(),
+            ChatEvent::Message(Box::new(notice_row(String::new(), text, Some(Utc::now())))),
+        ));
+    };
+    if account_user_id.is_empty() {
+        notice(
+            "a marker needs to know your user id; log in again under Config → Accounts \
+             to refresh the saved account identity"
+                .into(),
+        );
+        return;
+    }
+    let token = match tokens().await {
+        Ok(token) => token,
+        Err(err) => {
+            notice(format!("could not get a Twitch token for the marker: {err:#}"));
+            return;
+        }
+    };
+
+    // Twitch truncates a description at 140 characters; cutting it here means
+    // what the log says was sent is what was sent.
+    let description: String = description.trim().chars().take(140).collect();
+    let mut body = serde_json::json!({ "user_id": account_user_id });
+    if !description.is_empty() {
+        body["description"] = serde_json::Value::String(description.clone());
+    }
+
+    let sent = http
+        .post("https://api.twitch.tv/helix/streams/markers")
+        .header("Client-Id", &client_id)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await;
+    let response = match sent {
+        Ok(response) => response,
+        Err(_) => {
+            notice("could not reach Twitch to create the marker".into());
+            return;
+        }
+    };
+
+    match response.status().as_u16() {
+        200..=299 => {
+            #[derive(serde::Deserialize, Default)]
+            struct MarkerData {
+                #[serde(default)]
+                data: Vec<MarkerEntry>,
+            }
+            #[derive(serde::Deserialize, Default)]
+            struct MarkerEntry {
+                #[serde(default)]
+                position_seconds: i64,
+            }
+            let at = response
+                .json::<MarkerData>()
+                .await
+                .ok()
+                .and_then(|body| body.data.into_iter().next())
+                .map(|entry| entry.position_seconds.max(0))
+                .unwrap_or(0);
+            let stamp = format!("{}:{:02}:{:02}", at / 3600, (at % 3600) / 60, at % 60);
+            notice(if description.is_empty() {
+                format!("marker set at {stamp} — find it in the video editor")
+            } else {
+                format!("marker set at {stamp}: {description}")
+            });
+        }
+        // The two refusals worth naming, because both have a specific cause
+        // the user can do something about.
+        404 => notice(
+            "Twitch will not set a marker: this channel is not live, or the account has no \
+             VOD storage turned on"
+                .into(),
+        ),
+        401 | 403 => notice(
+            "Twitch refused the marker — the login predates the channel:manage:broadcast \
+             permission; log in again under Config → Accounts"
+                .into(),
+        ),
+        status => notice(format!("Twitch refused the marker (HTTP {status})")),
     }
 }
 

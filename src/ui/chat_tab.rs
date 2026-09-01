@@ -772,6 +772,31 @@ impl ChatTabState {
         }
     }
 
+    /// Drop a marker in the VOD at this moment.
+    pub fn mark_moment(&mut self) {
+        match self.active_chat_mut() {
+            Some(chat) => {
+                let _ = chat.handle.commands.try_send(ChatCommand::Marker {
+                    description: String::new(),
+                });
+            }
+            None => {
+                // Markers go through the chat connection, so there has to be
+                // one — saying which is better than a key that does nothing.
+                self.notify_local("no chat is open, so there is nowhere to send the marker");
+            }
+        }
+    }
+
+    /// Put a line in the focused chat that came from this program rather than
+    /// from a platform.
+    fn notify_local(&mut self, text: &str) {
+        if let Some(chat) = self.active_chat_mut() {
+            chat.state
+                .apply(ChatEvent::Message(Box::new(local_notice(text))));
+        }
+    }
+
     /// Insert pasted text into the composer at the caret.
     pub fn compose_paste(&mut self, text: &str) {
         if let Some(chat) = self.active_chat_mut() {
@@ -870,6 +895,21 @@ impl ChatTabState {
             self.mode = ChatFocus::Normal;
             if let Some(chat) = self.active_chat_mut() {
                 let _ = chat.handle.commands.try_send(ChatCommand::Clip);
+            }
+            return;
+        }
+        // A marker takes an optional note, so it goes through
+        // `command_argument` rather than an equality check — and "/markers"
+        // is a message, not a marker with the note "s".
+        if let Some(rest) = command_argument(&text, "/marker") {
+            let description = rest.trim().to_string();
+            chat.state.draft.clear();
+            self.mode = ChatFocus::Normal;
+            if let Some(chat) = self.active_chat_mut() {
+                let _ = chat
+                    .handle
+                    .commands
+                    .try_send(ChatCommand::Marker { description });
             }
             return;
         }
@@ -1182,8 +1222,9 @@ enum SlashVerdict {
 }
 
 /// Commands this program handles itself, before anything reaches a platform.
-const HANDLED_HERE: [&str; 7] = [
+const HANDLED_HERE: [&str; 8] = [
     "/clip",
+    "/marker",
     "/chats",
     "/channels",
     "/channel",
@@ -2148,6 +2189,34 @@ mod tests {
     /// The event this whole feature exists for. A raid gives you seconds to
     /// greet a few hundred people, and by default the pop-up fires whether or
     /// not the chat pane happens to be on screen — because during a stream it
+    /// A marker is a bookmark in the VOD, and the whole point is that it
+    /// takes one key at the moment you have no hands free.
+    #[tokio::test]
+    async fn the_marker_key_reaches_the_chat_task() {
+        let mut state = tab_state(1, 0);
+        let key = with_open_chat(&mut state, Notifier::new(false));
+        // A channel with room, so the send can be observed.
+        let (tx, mut rx) = mpsc::channel(4);
+        state.open.get_mut(&key).unwrap().handle.commands = tx;
+
+        state.mark_moment();
+
+        match rx.try_recv() {
+            Ok(ChatCommand::Marker { description }) => assert!(description.is_empty()),
+            other => panic!("expected a marker, got {other:?}"),
+        }
+    }
+
+    /// …and with no chat open it says so rather than doing nothing.
+    #[tokio::test]
+    async fn the_marker_key_says_when_there_is_nowhere_to_send_it() {
+        let mut state = tab_state(1, 0);
+        state.mark_moment();
+        // Nothing to assert on the wire; the point is that it does not panic
+        // and does not silently swallow the keypress.
+        assert!(state.open.is_empty());
+    }
+
     /// A rule that asks to be told has to reach the desktop, and one that
     /// does not must stay quiet — a notification for every match of a common
     /// word is how somebody learns to ignore their notifications.

@@ -372,6 +372,7 @@ const DEFAULTS: &[(Context, &str, Action)] = &[
     (Context::Global, "<Leader>cc", Action::ChatCompose),
     (Context::Global, "<Leader>cj", Action::ChatJoin),
     (Context::Global, "<Leader>cx", Action::ChatClose),
+    (Context::Global, "<Leader>cm", Action::ChatMarker),
     (Context::Global, "<Leader>cr", Action::ChatReconnect),
     (Context::Global, "<Leader>cs", Action::ChatSearch),
     (Context::Global, "<Leader>ce", Action::ChatEmojiPicker),

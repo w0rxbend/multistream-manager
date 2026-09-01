@@ -58,6 +58,15 @@ pub enum ChatCommand {
     Raid { target: String },
     /// Call off a raid during its countdown.
     Unraid,
+    /// Drop a marker at the current point of the broadcast (Twitch
+    /// `POST /helix/streams/markers`).
+    ///
+    /// A marker is a bookmark in the VOD: Twitch shows them on the timeline
+    /// in the video editor, which is how a moment worth clipping later gets
+    /// found again without scrubbing through four hours. Needs
+    /// `channel:manage:broadcast`, which the token already carries. YouTube
+    /// chats answer with a notice — it has no equivalent.
+    Marker { description: String },
 }
 
 /// One running chat: its identity, its command channel, and its task.

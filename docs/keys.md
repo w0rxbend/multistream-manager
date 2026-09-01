@@ -195,6 +195,8 @@ letter goes to that and find keeps `f`.
 | <kbd>c</kbd> <kbd>c</kbd> | `chat.compose` | Write a message |
 | <kbd>c</kbd> <kbd>j</kbd> | `chat.join` | Join a channel |
 | <kbd>c</kbd> <kbd>x</kbd> | `chat.close` | Close this chat |
+| `chat.marker` | Mark this moment in the VOD |
+| <kbd>c</kbd> <kbd>m</kbd> | `chat.marker` | Mark this moment in the VOD |
 | `config.next_section` | Next setting or section |
 | `config.previous_section` | Previous setting or section |
 | `config.swap_pane` | Swap between the section list and its contents |
@@ -393,6 +395,7 @@ Typed into the message box rather than pressed as keys.
 |---|---|---|
 | `/me <text>` | Twitch | Sends as an action, the way IRC always has |
 | `/clip` | Twitch | Clips your own live stream and answers with the edit URL |
+| `/marker [note]` | Twitch | Bookmarks this moment in the VOD, with an optional note. Twitch shows markers on the timeline in the video editor |
 | `/raid <channel>` | Twitch | Sends your viewers to another channel — the usual way a stream ends |
 | `/unraid` | Twitch | Calls the raid off during its countdown |
 | `/chats [target]` | both | Opens the join prompt, or joins the target directly |
