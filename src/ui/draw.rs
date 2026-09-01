@@ -633,6 +633,46 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
+    // The health strip. It lives in the header rather than on the dashboard
+    // because the header is on every tab, and the hour of a stream is spent
+    // reading chat — which is exactly where "your encoder died" used to be
+    // invisible.
+    let strip = crate::health::strip(
+        &app.selected,
+        &app.stats,
+        app.config.obs.enabled.then_some(&app.obs),
+    );
+    for segment in &strip {
+        let colour = match segment.health {
+            crate::health::Health::Good => sk.success,
+            crate::health::Health::Warn => sk.warning,
+            crate::health::Health::Bad => sk.error,
+            crate::health::Health::Idle => sk.muted,
+        };
+        spans.push(Span::styled("  ·  ", Style::new().fg(sk.border)));
+        if !segment.label.is_empty() {
+            spans.push(Span::styled(
+                format!("{} ", segment.label),
+                Style::new().fg(sk.muted),
+            ));
+            // The glyph carries the colour, so the state survives being read
+            // on a monochrome terminal or by somebody who cannot separate
+            // red from green.
+            let glyph = match segment.health {
+                crate::health::Health::Good => "●",
+                crate::health::Health::Warn => "▲",
+                crate::health::Health::Bad => "■",
+                crate::health::Health::Idle => "○",
+            };
+            spans.push(Span::styled(format!("{glyph} "), Style::new().fg(colour)));
+        }
+        let mut style = Style::new().fg(colour);
+        if segment.health == crate::health::Health::Bad {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        spans.push(Span::styled(segment.detail.clone(), style));
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -1471,6 +1511,39 @@ mod tests {
             !screen.contains("Where are you streaming?"),
             "the platform picker is useless without credentials"
         );
+    }
+
+    /// The strip has to be on screen from every tab, because the hour of a
+    /// stream is spent reading chat and that is exactly where "your encoder
+    /// died forty minutes ago" used to be invisible.
+    #[test]
+    fn the_health_strip_reaches_the_header_from_the_chat_tab() {
+        let _scratch = crate::paths::test_support::ScratchConfigDir::new("draw-health");
+        let mut app = App::new(Config::default());
+        app.splash_skipped = true;
+        app.selected = vec![crate::model::Platform::Twitch];
+        app.stats.insert(
+            crate::model::Platform::Twitch,
+            crate::model::PlatformStats {
+                live: true,
+                viewers: Some(142),
+                started_at: None,
+                extra: Vec::new(),
+                error: None,
+            },
+        );
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('2'),
+            crossterm::event::KeyModifiers::ALT,
+        ));
+
+        let screen = render(&app, 120, 30);
+
+        assert!(
+            screen.contains("TW"),
+            "the platform badge belongs on every tab: {screen}"
+        );
+        assert!(screen.contains("live 142"), "{screen}");
     }
 
     /// The pre-flight list has to reach the screen, and has to lead with the

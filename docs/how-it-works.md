@@ -322,6 +322,66 @@ The form uses this live: the submit hint turns green only when nothing blocking
 remains, and the advisory issues are listed beside it so you can see what will
 be adapted rather than refused.
 
+The pre-flight check reuses this exact function rather than writing its own
+version of "ready", so the checklist and the form can never disagree.
+
+---
+
+## Pre-flight, and the health strip
+
+Two features that add no new API surface at all. Everything they show, the
+program already knew and simply kept to itself until something failed.
+
+**Pre-flight** (`src/preflight.rs`) runs when you press the go-live key. It is a
+pure function over state the interface is already holding — no network, no
+`async`, and the only filesystem access is the thumbnail path you typed — which
+is why it can be tested without a running OBS or a live account. It answers, per
+selected platform: are the credentials there, are you logged in, will the token
+expire soon *with no refresh token behind it*, and does the login predate a
+permission a newer feature needs. Then it validates the plan, and then it looks
+at OBS: the selected scene, free disk, whether OBS is already streaming, and
+**which audio inputs are muted**.
+
+That last one is the reason the module exists. Streaming for forty minutes on a
+muted microphone is the classic solo-streamer disaster, and it happens because
+nothing checks — even though OBS has been telling this program the mute state
+once a second the whole time.
+
+Severity is the design. *Blocking* means going live now would fail or produce
+something nobody wants, and it stops the key. *Warning* is your business:
+muting the desktop audio on purpose is completely normal, and only you know
+which input is the microphone.
+
+**The health strip** (`src/health.rs`) is the same idea for the hour after you
+go live. It sits in the header, so it is on every tab:
+
+```text
+TW ● live 142  ·  YT ● live 38  ·  OBS ● 6100 kb/s drop 0.2%  ·  1:23:04
+```
+
+The colour is computed, not decorative:
+
+| State | Colour | Meaning |
+|---|---|---|
+| Platform live | Green ● | Receiving your feed, with the viewer count |
+| Poll failed | Amber ▲ | The numbers are older than they look — not a dead stream |
+| Not live, OBS idle | Grey ○ | Simply the truth before you start |
+| **Not live, OBS streaming** | **Red ■** | OBS is sending and the platform is not receiving |
+| Output frames dropped ≥1% | Amber ▲ | The upload is not keeping up; viewers see stuttering |
+| Output frames dropped ≥5% | Red ■ | The same, badly |
+
+The red case is the one nothing else on screen reports. The distinction that
+makes it worth having is that "not live" alone means nothing — before the
+stream starts it is correct — so it is only an alarm when OBS believes it is
+still sending.
+
+Each state also has its own glyph, so it survives a monochrome terminal and a
+reader who cannot separate red from green.
+
+Uptime follows the *earliest* start across the platforms, because going live on
+two platforms a few seconds apart should show one figure rather than two that
+disagree.
+
 ---
 
 ## Authentication and token renewal
