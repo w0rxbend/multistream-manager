@@ -197,7 +197,14 @@ impl TokenStore {
     }
 
     /// Write the token file back out with owner-only permissions.
-    pub fn save(&self) -> Result<()> {
+    ///
+    /// Requires the cross-process lock as a *value*, not as a convention. The
+    /// store is written by whole-file replacement, so a save that races
+    /// another process's refresh silently erases whatever that process wrote
+    /// — and with a rotating refresh token, the token it erases may be the
+    /// only valid one. Taking `&StoreLock` here means the compiler will not
+    /// let a caller forget; the guard is otherwise unused.
+    pub fn save(&self, _lock: &StoreLock) -> Result<()> {
         let path = paths::token_file()?;
         let json = serde_json::to_string_pretty(self).context("serialising tokens")?;
         paths::write_secret_file(&path, &json)
@@ -391,6 +398,10 @@ mod tests {
         assert!(!tokens.needs_refresh());
     }
 
+    /// The lock is not a convention any more: `save` takes it as a value, so
+    /// this test exists to record *why* the parameter is there rather than to
+    /// exercise a path a caller could still get wrong.
+    ///
     /// Two cooperating writers doing load-modify-save cycles must never erase
     /// each other's entries. Without the lock this interleaving loses updates:
     /// each save writes back the whole map from a possibly stale load.
@@ -402,13 +413,13 @@ mod tests {
         let writer = |platform: Platform| {
             std::thread::spawn(move || {
                 for i in 0..ROUNDS {
-                    let _lock = StoreLock::acquire().expect("locking must work");
+                    let lock = StoreLock::acquire().expect("locking must work");
                     let mut store = TokenStore::load().expect("loading must work");
                     store.set(
                         platform,
                         TokenSet::new(format!("token-{i}"), None, Some(3600), vec![]),
                     );
-                    store.save().expect("saving must work");
+                    store.save(&lock).expect("saving must work");
                 }
             })
         };

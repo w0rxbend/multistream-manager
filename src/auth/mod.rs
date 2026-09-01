@@ -79,7 +79,7 @@ pub async fn login_with(
     // The lock covers the whole load-set-save cycle, so a token refresh
     // running in another msm process cannot save a stale snapshot over this
     // brand-new login (or vice versa).
-    let _lock = lock_store().await?;
+    let lock = lock_store().await?;
     let mut store = load_store().await?;
 
     // Logging in with --add using the account that is already the primary
@@ -95,7 +95,8 @@ pub async fn login_with(
     } else {
         store.set_keyed(final_key.clone(), tokens);
     }
-    save_store(store).await?;
+    let (_lock, result) = save_store(store, lock).await?;
+    result?;
     Ok(final_key)
 }
 
@@ -212,10 +213,35 @@ async fn load_store() -> Result<TokenStore> {
 }
 
 /// Write the token file without blocking the async runtime. See [`load_store`].
-async fn save_store(store: TokenStore) -> Result<()> {
-    tokio::task::spawn_blocking(move || store.save())
-        .await
-        .context("saving the renewed tokens")?
+///
+/// The lock is moved in and handed back out so that it stays held across the
+/// write — releasing it before the file is on disk would reopen exactly the
+/// race it exists to prevent.
+async fn save_store(store: TokenStore, lock: StoreLock) -> Result<(StoreLock, Result<()>)> {
+    tokio::task::spawn_blocking(move || {
+        let result = store.save(&lock);
+        (lock, result)
+    })
+    .await
+    .context("saving the renewed tokens")
+}
+
+/// Read, change and write the token store as one locked operation.
+///
+/// The whole cycle happens under the cross-process lock, so a change made
+/// here cannot be lost to a token refresh running in another copy of the
+/// program (or in another task of this one). Anything that edits stored
+/// tokens outside a refresh — logging out, forgetting an extra chat account —
+/// should go through this rather than doing its own load/save pair.
+pub async fn mutate_store<F>(change: F) -> Result<()>
+where
+    F: FnOnce(&mut TokenStore) + Send + 'static,
+{
+    let lock = lock_store().await?;
+    let mut store = load_store().await?;
+    change(&mut store);
+    let (_lock, result) = save_store(store, lock).await?;
+    result
 }
 
 /// Tokens for several platforms at once, reading and writing the file once.
@@ -274,11 +300,28 @@ pub async fn access_tokens(
     }
 
     if renewed_any {
-        if let Err(err) = save_store(store).await {
-            tracing::warn!(error = %format!("{err:#}"), "could not save the renewed tokens");
+        let saved = match save_store(store, lock).await {
+            Ok((_lock, result)) => result,
+            Err(err) => Err(err),
+        };
+        if let Err(err) = saved {
+            // A renewed token that was not written down is a token this
+            // process will use once and then lose: the next run reads the old
+            // one, which the provider has already rotated away. Reporting it
+            // as an error per renewed platform matches what
+            // `access_token_for_key` already does, instead of leaving the
+            // problem in a log file nobody is looking at mid-stream.
+            let message = format!("{err:#}");
+            tracing::warn!(error = %message, "could not save the renewed tokens");
+            for (_, result) in results.iter_mut() {
+                if result.is_ok() {
+                    *result = Err(anyhow::anyhow!(
+                        "the renewed login could not be saved: {message}"
+                    ));
+                }
+            }
         }
     }
-    drop(lock);
 
     results
 }
@@ -296,11 +339,12 @@ pub async fn access_token_for_key(config: &Config, key: &str) -> Result<String> 
         .map_err(|err: String| anyhow::anyhow!(err))
         .with_context(|| format!("account key {key:?} does not name a platform"))?;
 
-    let _lock = lock_store().await?;
+    let lock = lock_store().await?;
     let mut store = load_store().await?;
     let (token, renewed) = keyed_token_from(config, platform, key, &mut store).await?;
     if renewed {
-        save_store(store).await?;
+        let (_lock, result) = save_store(store, lock).await?;
+        result?;
     }
     Ok(token)
 }
@@ -438,7 +482,9 @@ mod tests {
             Platform::Twitch,
             TokenSet::new("twitch-token".into(), Some("r".into()), Some(3600), vec![]),
         );
-        store.save().expect("writing the scratch token file");
+        let lock = StoreLock::acquire().expect("locking the scratch store");
+        store.save(&lock).expect("writing the scratch token file");
+        drop(lock);
 
         let config = Config::default();
         let results = access_tokens(&config, &Platform::ALL).await;

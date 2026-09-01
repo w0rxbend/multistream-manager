@@ -417,11 +417,15 @@ pub async fn run(
             }
 
             Command::Logout(platform) => {
-                let outcome = (|| -> anyhow::Result<()> {
-                    let mut store = crate::auth::store::TokenStore::load()?;
+                // Through `mutate_store`, so the whole read-change-write cycle
+                // happens under the cross-process lock. Doing its own load and
+                // save meant a token refresh running concurrently could write
+                // its snapshot afterwards and quietly restore the login that
+                // had just been forgotten.
+                let outcome = crate::auth::mutate_store(move |store| {
                     store.remove(platform);
-                    store.save()
-                })();
+                })
+                .await;
                 let _ = events.send(match outcome {
                     Ok(()) => {
                         // The engine holds a backend authenticated with the
