@@ -59,6 +59,27 @@ would break an existing setup is listed under **Changed** with what to do.
   Chats got a solid chip. Both now show. A message that names you gets an
   accent gutter — the app already worked that out for the mentions filter and
   used it only to hide *other* messages.
+- **Streamer mode** (`[appearance] streamer_mode`), borrowed from Chatterino.
+  Hides the client ids on the setup screen and the file paths in Config →
+  Files whenever OBS reports streaming or recording, for the moment nobody
+  plans for: tabbing to a settings screen mid-broadcast. The header says when
+  it is on.
+- **Highlight rules** (`[[chat.highlight]]`), borrowed from Chatterino's
+  separation of highlights from filters. The digit filters *exclude*; these
+  *promote*, so "look at this one" can mean something other than your own
+  name — a keyword, a moderator speaking, anything paid. With an ignore list
+  checked first, so your own bot never lights up the pane. No regular
+  expressions, deliberately: phrase, word, user, badge and event cover what
+  people write, and a regex engine is a real dependency cost.
+- **Twitch stream markers** (`<Leader>cm`, or `/marker [note]`), borrowed from
+  Streamer.bot. A bookmark in the VOD, so a moment worth clipping later can be
+  found without scrubbing through four hours. Needs no new permission — the
+  token already carries the one it uses.
+- **Named stream profiles** (`[profile.<name>]`, `<Leader>sp`), borrowed from
+  Restream's stream groups and Castr's destination sets. One set of settings
+  per kind of stream, instead of retyping the title, tags and both categories
+  every time you switch. `[preset]` stays the unnamed default, so existing
+  configs are untouched.
 - **`[keys.config]`**: the Config tab's keys are named, rebindable actions
   instead of hardcoded matches, so they appear in which-key, `<Leader>?` and
   the palette like every other tab's.
